@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/openai/openai-go/v3"
 	"github.com/fernandopn/benoid/providers"
+	"github.com/openai/openai-go/v3"
 )
 
 func main() {
@@ -27,9 +27,9 @@ func main() {
 
 	var provider providers.Provider
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
-	case "streamingopenai", "streaming":
+	case "streamingopenai":
 		provider = providers.NewStreamingOpenAI(client)
-	case "directopenai", "direct":
+	case "directopenai":
 		provider = providers.NewDirectOpenAI(client)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown provider:", *providerName)
