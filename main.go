@@ -21,6 +21,7 @@ func main() {
 
 	client := openai.NewClient()
 	reader := bufio.NewReader(os.Stdin)
+	writer := bufio.NewWriter(os.Stdout)
 	fmt.Println("GPT-5.2 TUI. Type /exit to quit.")
 
 	var previousID string
@@ -53,22 +54,47 @@ func main() {
 			params.PreviousResponseID = openai.String(previousID)
 		}
 
-		resp, reqErr := client.Responses.New(ctx, params)
+		stream := client.Responses.NewStreaming(ctx, params)
+		fmt.Fprint(writer, "assistant> ")
+		writer.Flush()
+
+		var (
+			sawText     bool
+			completedID string
+		)
+
+		for stream.Next() {
+			event := stream.Current()
+			if event.Type == "response.output_text.delta" && event.Delta != "" {
+				fmt.Fprint(writer, event.Delta)
+				writer.Flush()
+				sawText = true
+			}
+			if event.Type == "response.completed" && event.Response.ID != "" {
+				completedID = event.Response.ID
+			}
+		}
 		cancel()
-		if reqErr != nil {
-			fmt.Fprintln(os.Stderr, "request error:", reqErr)
+
+		if stream.Err() != nil {
+			fmt.Fprintln(writer)
+			writer.Flush()
+			fmt.Fprintln(os.Stderr, "stream error:", stream.Err())
 			if err == io.EOF {
 				return
 			}
 			continue
 		}
 
-		previousID = resp.ID
-		output := strings.TrimSpace(resp.OutputText())
-		if output == "" {
-			output = "(no content)"
+		if !sawText {
+			fmt.Fprint(writer, "(no content)")
 		}
-		fmt.Printf("assistant> %s\n", output)
+		fmt.Fprintln(writer)
+		writer.Flush()
+
+		if completedID != "" {
+			previousID = completedID
+		}
 
 		if err == io.EOF {
 			return
