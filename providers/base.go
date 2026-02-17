@@ -1,12 +1,22 @@
 package providers
 
-import (
-	"context"
-	"io"
+import "context"
+
+type MsgType int
+
+const (
+	MsgTypeChat MsgType = iota
+	MsgTypeError
 )
+
+// Msg represents a message emitted by a provider.
+type Msg struct {
+	Type  MsgType
+	Value string
+}
 
 // Provider abstracts the chat interaction for a model backend.
 type Provider interface {
-	// Chat writes the assistant response to w and returns the new previous response ID.
-	Chat(ctx context.Context, input string, previousID string, w io.Writer) (string, error)
+	// Chat returns a stream of messages. The stream is done when the channel closes.
+	Chat(ctx context.Context, input string) <-chan Msg
 }

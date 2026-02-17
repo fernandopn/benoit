@@ -16,6 +16,7 @@ import (
 
 func main() {
 	providerName := flag.String("provider", "StreamingOpenAI", "provider class (StreamingOpenAI or DirectOpenAI)")
+	timeout := flag.Duration("timeout", 60*time.Second, "request timeout (e.g. 45s, 2m)")
 	flag.Parse()
 
 	if _, ok := os.LookupEnv("OPENAI_API_KEY"); !ok {
@@ -40,9 +41,8 @@ func main() {
 	writer := bufio.NewWriter(os.Stdout)
 	fmt.Println("GPT-5.2 TUI. Type /exit to quit.")
 
-	var previousID string
 	for {
-		fmt.Print("you> ")
+		fmt.Print(">: ")
 		line, err := reader.ReadString('\n')
 		if err != nil && err != io.EOF {
 			fmt.Fprintln(os.Stderr, "read error:", err)
@@ -61,27 +61,30 @@ func main() {
 			return
 		}
 
-		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
-		fmt.Fprint(writer, "assistant> ")
+		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+		fmt.Fprint(writer, "Assistant> ")
 		writer.Flush()
 
-		newPreviousID, reqErr := provider.Chat(ctx, text, previousID, writer)
-		cancel()
-
-		if reqErr != nil {
-			fmt.Fprintln(writer)
-			writer.Flush()
-			fmt.Fprintln(os.Stderr, "request error:", reqErr)
-			if err == io.EOF {
-				return
+		var hadError bool
+		msgs := provider.Chat(ctx, text)
+		for msg := range msgs {
+			switch msg.Type {
+			case providers.MsgTypeChat:
+				fmt.Fprint(writer, msg.Value)
+				writer.Flush()
+			case providers.MsgTypeError:
+				hadError = true
+				fmt.Fprintln(os.Stderr, "request error:", msg.Value)
 			}
-			continue
 		}
+		cancel()
 
 		fmt.Fprintln(writer)
 		writer.Flush()
 
-		previousID = newPreviousID
+		if hadError && err == io.EOF {
+			return
+		}
 
 		if err == io.EOF {
 			return

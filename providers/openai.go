@@ -1,10 +1,9 @@
 package providers
 
 import (
-	"bufio"
 	"context"
-	"io"
 	"strings"
+	"sync"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -13,19 +12,38 @@ import (
 // StreamingOpenAI uses the Responses streaming API.
 type StreamingOpenAI struct {
 	client openai.Client
+	state  *openAIState
 }
 
 // DirectOpenAI uses the non-streaming Responses API.
 type DirectOpenAI struct {
 	client openai.Client
+	state  *openAIState
+}
+
+type openAIState struct {
+	mu         sync.Mutex
+	previousID string
+}
+
+func (s *openAIState) get() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.previousID
+}
+
+func (s *openAIState) set(id string) {
+	s.mu.Lock()
+	s.previousID = id
+	s.mu.Unlock()
 }
 
 func NewStreamingOpenAI(client openai.Client) *StreamingOpenAI {
-	return &StreamingOpenAI{client: client}
+	return &StreamingOpenAI{client: client, state: &openAIState{}}
 }
 
 func NewDirectOpenAI(client openai.Client) *DirectOpenAI {
-	return &DirectOpenAI{client: client}
+	return &DirectOpenAI{client: client, state: &openAIState{}}
 }
 
 func buildParams(input string, previousID string) responses.ResponseNewParams {
@@ -39,60 +57,56 @@ func buildParams(input string, previousID string) responses.ResponseNewParams {
 	return params
 }
 
-func (s *StreamingOpenAI) Chat(ctx context.Context, input string, previousID string, w io.Writer) (string, error) {
-	params := buildParams(input, previousID)
+func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
+	out := make(chan Msg)
+	params := buildParams(input, s.state.get())
 	stream := s.client.Responses.NewStreaming(ctx, params)
 
-	writer := bufio.NewWriter(w)
-	var (
-		sawText     bool
-		completedID string
-	)
+	go func() {
+		defer close(out)
 
-	for stream.Next() {
-		event := stream.Current()
-		if event.Type == "response.output_text.delta" && event.Delta != "" {
-			_, _ = writer.WriteString(event.Delta)
-			_ = writer.Flush()
-			sawText = true
+		for stream.Next() {
+			event := stream.Current()
+			if event.Type == "response.output_text.delta" && event.Delta != "" {
+				out <- Msg{Type: MsgTypeChat, Value: event.Delta}
+			}
+			if event.Type == "response.completed" && event.Response.ID != "" {
+				s.state.set(event.Response.ID)
+			}
 		}
-		if event.Type == "response.completed" && event.Response.ID != "" {
-			completedID = event.Response.ID
+
+		if err := stream.Err(); err != nil {
+			out <- Msg{Type: MsgTypeError, Value: err.Error()}
+			return
 		}
-	}
 
-	if err := stream.Err(); err != nil {
-		_ = writer.Flush()
-		return previousID, err
-	}
+	}()
 
-	if !sawText {
-		_, _ = writer.WriteString("(no content)")
-		_ = writer.Flush()
-	}
-
-	if completedID != "" {
-		return completedID, nil
-	}
-
-	return previousID, nil
+	return out
 }
 
-func (d *DirectOpenAI) Chat(ctx context.Context, input string, previousID string, w io.Writer) (string, error) {
-	params := buildParams(input, previousID)
-	resp, err := d.client.Responses.New(ctx, params)
-	if err != nil {
-		return previousID, err
-	}
+func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
+	out := make(chan Msg, 1)
+	params := buildParams(input, d.state.get())
 
-	output := strings.TrimSpace(resp.OutputText())
-	if output == "" {
-		output = "(no content)"
-	}
+	go func() {
+		defer close(out)
 
-	if _, err := io.WriteString(w, output); err != nil {
-		return resp.ID, err
-	}
+		resp, err := d.client.Responses.New(ctx, params)
+		if err != nil {
+			out <- Msg{Type: MsgTypeError, Value: err.Error()}
+			return
+		}
 
-	return resp.ID, nil
+		output := strings.TrimSpace(resp.OutputText())
+		if output != "" {
+			out <- Msg{Type: MsgTypeChat, Value: output}
+		}
+
+		if resp.ID != "" {
+			d.state.set(resp.ID)
+		}
+	}()
+
+	return out
 }
