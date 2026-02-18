@@ -11,35 +11,36 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoid/providers"
-	"github.com/openai/openai-go/v3"
 )
 
 func main() {
 	providerName := flag.String("provider", "StreamingOpenAI", "provider class (StreamingOpenAI or DirectOpenAI)")
+	model := flag.String("model", "gpt-5.2", "model name")
 	timeout := flag.Duration("timeout", 60*time.Second, "request timeout (e.g. 45s, 2m)")
 	flag.Parse()
 
-	if _, ok := os.LookupEnv("OPENAI_API_KEY"); !ok {
-		fmt.Fprintln(os.Stderr, "OPENAI_API_KEY is not set")
-		os.Exit(1)
-	}
-
-	client := openai.NewClient()
-
-	var provider providers.Provider
+	var (
+		provider providers.Provider
+		err      error
+	)
+	ctx := context.Background()
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
 	case "streamingopenai":
-		provider = providers.NewStreamingOpenAI(client)
+		provider, err = providers.NewStreamingOpenAI(ctx, *model)
 	case "directopenai":
-		provider = providers.NewDirectOpenAI(client)
+		provider, err = providers.NewDirectOpenAI(ctx, *model)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown provider:", *providerName)
+		os.Exit(1)
+	}
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "provider init error:", err)
 		os.Exit(1)
 	}
 
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
-	fmt.Println("GPT-5.2 TUI. Type /exit to quit.")
+	fmt.Printf("%s. Type /exit to quit.\n", provider.Name())
 
 	for {
 		fmt.Print(">: ")
