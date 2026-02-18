@@ -19,6 +19,7 @@ Minimal terminal chat client for the OpenAI Responses API using the official Go 
 - Libraries should not create their own contexts. If a context is needed, accept it as an argument and let callers decide timeouts/cancellation.
 - Avoid setting default values when an input is empty; defaults should be handled by the caller or flags.
 - Prefer simple, direct solutions. Avoid adding extra behaviors or placeholders that were not requested, especially if they may be removed later.
+- Within a package, the category is set by the file name (e.g., `openai.go`). Keep all OpenAI-related code in `openai.go` and tests in `openai_test.go`. Implementation-agnostic interfaces or shared structs can live in `base.go` (e.g., `tools/base.go`).
 
 If your Go module cache is not writable, use a custom cache:
 - `GOMODCACHE=/tmp/gomodcache go mod tidy`

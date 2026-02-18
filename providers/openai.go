@@ -14,6 +14,53 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+// === Abstractions for testing ===
+
+type responseStream interface {
+	Next() bool
+	Current() responses.ResponseStreamEventUnion
+	Err() error
+}
+
+type openAIClient interface {
+	ListModels(ctx context.Context) ([]string, error)
+	NewResponse(ctx context.Context, params responses.ResponseNewParams) (*responses.Response, error)
+	NewStreamingResponse(ctx context.Context, params responses.ResponseNewParams) responseStream
+}
+
+type openAIClientAdapter struct {
+	client openai.Client
+}
+
+func newOpenAIClientAdapter() *openAIClientAdapter {
+	return &openAIClientAdapter{client: openai.NewClient()}
+}
+
+func (a *openAIClientAdapter) ListModels(ctx context.Context) ([]string, error) {
+	page, err := a.client.Models.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	models := make([]string, 0, len(page.Data))
+	for _, model := range page.Data {
+		if model.ID != "" {
+			models = append(models, model.ID)
+		}
+	}
+	return models, nil
+}
+
+func (a *openAIClientAdapter) NewResponse(ctx context.Context, params responses.ResponseNewParams) (*responses.Response, error) {
+	return a.client.Responses.New(ctx, params)
+}
+
+func (a *openAIClientAdapter) NewStreamingResponse(ctx context.Context, params responses.ResponseNewParams) responseStream {
+	return a.client.Responses.NewStreaming(ctx, params)
+}
+
+// === Generic OpenAI ===
+
 const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). After receiving a directory listing, batch list_files calls for all subdirectories in one response. Do not serialize independent tool calls."
 
 type baseOpenAI struct {
@@ -25,16 +72,6 @@ type baseOpenAI struct {
 	toolDefs         []responses.ToolUnionParam
 	toolMap          map[string]tools.Tool
 	toolRunner       toolRunner
-}
-
-// StreamingOpenAI uses the Responses streaming API.
-type StreamingOpenAI struct {
-	*baseOpenAI
-}
-
-// DirectOpenAI uses the non-streaming Responses API.
-type DirectOpenAI struct {
-	*baseOpenAI
 }
 
 type openAIState struct {
@@ -52,22 +89,6 @@ func (s *openAIState) set(id string) {
 	s.mu.Lock()
 	s.previousID = id
 	s.mu.Unlock()
-}
-
-func NewStreamingOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*StreamingOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model, toolSet)
-	if err != nil {
-		return nil, err
-	}
-	return &StreamingOpenAI{baseOpenAI: base}, nil
-}
-
-func NewDirectOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*DirectOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model, toolSet)
-	if err != nil {
-		return nil, err
-	}
-	return &DirectOpenAI{baseOpenAI: base}, nil
 }
 
 func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []tools.Tool) (*baseOpenAI, error) {
@@ -270,6 +291,21 @@ func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 	}
 }
 
+// === Streaming OpenAI ===
+
+// StreamingOpenAI uses the Responses streaming API.
+type StreamingOpenAI struct {
+	*baseOpenAI
+}
+
+func NewStreamingOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*StreamingOpenAI, error) {
+	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model, toolSet)
+	if err != nil {
+		return nil, err
+	}
+	return &StreamingOpenAI{baseOpenAI: base}, nil
+}
+
 func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	out := make(chan Msg)
 
@@ -302,6 +338,42 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	}()
 
 	return out
+}
+
+func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
+	stream := s.client.NewStreamingResponse(ctx, params)
+	var completed *responses.Response
+	for stream.Next() {
+		event := stream.Current()
+		if event.Type == "response.output_text.delta" && event.Delta != "" {
+			out <- Msg{Type: MsgTypeChat, Value: event.Delta}
+		}
+		if event.Type == "response.completed" {
+			completed = &event.Response
+			if event.Response.ID != "" {
+				s.state.set(event.Response.ID)
+			}
+		}
+	}
+	if err := stream.Err(); err != nil {
+		return completed, err
+	}
+	return completed, nil
+}
+
+// === Direct OpenAI ===
+
+// DirectOpenAI uses the non-streaming Responses API.
+type DirectOpenAI struct {
+	*baseOpenAI
+}
+
+func NewDirectOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*DirectOpenAI, error) {
+	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model, toolSet)
+	if err != nil {
+		return nil, err
+	}
+	return &DirectOpenAI{baseOpenAI: base}, nil
 }
 
 func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
@@ -343,25 +415,4 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	}()
 
 	return out
-}
-
-func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
-	stream := s.client.NewStreamingResponse(ctx, params)
-	var completed *responses.Response
-	for stream.Next() {
-		event := stream.Current()
-		if event.Type == "response.output_text.delta" && event.Delta != "" {
-			out <- Msg{Type: MsgTypeChat, Value: event.Delta}
-		}
-		if event.Type == "response.completed" {
-			completed = &event.Response
-			if event.Response.ID != "" {
-				s.state.set(event.Response.ID)
-			}
-		}
-	}
-	if err := stream.Err(); err != nil {
-		return completed, err
-	}
-	return completed, nil
 }
