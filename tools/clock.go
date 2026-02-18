@@ -9,10 +9,16 @@ import (
 )
 
 // ClockTool provides the current time.
-type ClockTool struct{}
+type ClockTool struct {
+	now func() time.Time
+}
 
 func NewClockTool() *ClockTool {
-	return &ClockTool{}
+	return NewClockToolWithNow(time.Now)
+}
+
+func NewClockToolWithNow(now func() time.Time) *ClockTool {
+	return &ClockTool{now: now}
 }
 
 func (c *ClockTool) Name() string {
@@ -37,5 +43,8 @@ func (c *ClockTool) Definition() responses.ToolUnionParam {
 func (c *ClockTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	_ = ctx
 	_ = args
-	return time.Now().Format(time.RFC3339), nil
+	if c.now == nil {
+		return "error: clock not configured", nil
+	}
+	return c.now().Format(time.RFC3339), nil
 }

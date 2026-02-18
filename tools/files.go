@@ -3,7 +3,6 @@ package tools
 import (
 	"context"
 	"fmt"
-	"os"
 	"sort"
 	"strings"
 
@@ -12,10 +11,16 @@ import (
 )
 
 // ListFilesTool lists entries in a directory.
-type ListFilesTool struct{}
+type ListFilesTool struct {
+	fs FileSystem
+}
 
 func NewListFilesTool() *ListFilesTool {
-	return &ListFilesTool{}
+	return NewListFilesToolWithFS(osFS{})
+}
+
+func NewListFilesToolWithFS(fs FileSystem) *ListFilesTool {
+	return &ListFilesTool{fs: fs}
 }
 
 func (l *ListFilesTool) Name() string {
@@ -44,6 +49,9 @@ func (l *ListFilesTool) Definition() responses.ToolUnionParam {
 
 func (l *ListFilesTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	_ = ctx
+	if l.fs == nil {
+		return "error: filesystem not configured", nil
+	}
 	path := "."
 	if raw, ok := args["path"]; ok {
 		value, ok := raw.(string)
@@ -56,7 +64,7 @@ func (l *ListFilesTool) Call(ctx context.Context, args map[string]any) (string, 
 		}
 		path = value
 	}
-	entries, err := os.ReadDir(path)
+	entries, err := l.fs.ReadDir(path)
 	if err != nil {
 		return fmt.Sprintf("error: %v", err), nil
 	}
@@ -73,10 +81,16 @@ func (l *ListFilesTool) Call(ctx context.Context, args map[string]any) (string, 
 }
 
 // CurrentDirectoryTool returns the current working directory.
-type CurrentDirectoryTool struct{}
+type CurrentDirectoryTool struct {
+	fs FileSystem
+}
 
 func NewCurrentDirectoryTool() *CurrentDirectoryTool {
-	return &CurrentDirectoryTool{}
+	return NewCurrentDirectoryToolWithFS(osFS{})
+}
+
+func NewCurrentDirectoryToolWithFS(fs FileSystem) *CurrentDirectoryTool {
+	return &CurrentDirectoryTool{fs: fs}
 }
 
 func (c *CurrentDirectoryTool) Name() string {
@@ -101,7 +115,10 @@ func (c *CurrentDirectoryTool) Definition() responses.ToolUnionParam {
 func (c *CurrentDirectoryTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	_ = ctx
 	_ = args
-	dir, err := os.Getwd()
+	if c.fs == nil {
+		return "error: filesystem not configured", nil
+	}
+	dir, err := c.fs.Getwd()
 	if err != nil {
 		return fmt.Sprintf("error: %v", err), nil
 	}

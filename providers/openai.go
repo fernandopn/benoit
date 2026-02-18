@@ -14,12 +14,13 @@ import (
 )
 
 type baseOpenAI struct {
-	client   openai.Client
-	state    *openAIState
-	model    string
-	kind     string
-	toolDefs []responses.ToolUnionParam
-	toolMap  map[string]tools.Tool
+	client     openAIClient
+	state      *openAIState
+	model      string
+	kind       string
+	toolDefs   []responses.ToolUnionParam
+	toolMap    map[string]tools.Tool
+	toolRunner toolRunner
 }
 
 // StreamingOpenAI uses the Responses streaming API.
@@ -70,7 +71,12 @@ func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []too
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
 
-	base := &baseOpenAI{client: openai.NewClient(), state: &openAIState{}, kind: kind}
+	base := &baseOpenAI{
+		client:     newOpenAIClientAdapter(),
+		state:      &openAIState{},
+		kind:       kind,
+		toolRunner: parallelToolRunner{},
+	}
 	resolved, err := base.resolveModel(ctx, model)
 	if err != nil {
 		return nil, err
@@ -145,18 +151,7 @@ func (b *baseOpenAI) resolveModel(ctx context.Context, model string) (string, er
 }
 
 func (b *baseOpenAI) ListModels(ctx context.Context) ([]string, error) {
-	page, err := b.client.Models.List(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	models := make([]string, 0, len(page.Data))
-	for _, model := range page.Data {
-		if model.ID != "" {
-			models = append(models, model.ID)
-		}
-	}
-	return models, nil
+	return b.client.ListModels(ctx)
 }
 
 func (b *baseOpenAI) Name() string {
@@ -164,55 +159,15 @@ func (b *baseOpenAI) Name() string {
 }
 
 func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {
-	if resp == nil || len(resp.Output) == 0 {
-		return nil, nil
-	}
-	type toolCall struct {
-		name   string
-		callID string
-		args   map[string]any
-		raw    string
-		tool   tools.Tool
-	}
-	type toolResult struct {
-		output string
-		err    error
-	}
-	calls := make([]toolCall, 0)
-	for _, item := range resp.Output {
-		if item.Type != "function_call" {
-			continue
-		}
-		call := item.AsFunctionCall()
-		if call.Name == "" {
-			continue
-		}
-		if b.toolMap == nil {
-			return nil, fmt.Errorf("tool call received but no tools are configured")
-		}
-		tool, ok := b.toolMap[call.Name]
-		if !ok {
-			return nil, fmt.Errorf("tool not found: %s", call.Name)
-		}
-		if call.CallID == "" {
-			return nil, fmt.Errorf("tool call missing call_id: %s", call.Name)
-		}
-		args, err := parseToolArgs(call.Arguments)
-		if err != nil {
-			return nil, fmt.Errorf("invalid arguments for %s: %w", call.Name, err)
-		}
-		calls = append(calls, toolCall{
-			name:   call.Name,
-			callID: call.CallID,
-			args:   args,
-			raw:    call.Arguments,
-			tool:   tool,
-		})
-	}
+	calls := functionCallsFromResponse(resp)
 	if len(calls) == 0 {
 		return nil, nil
 	}
-	for _, call := range calls {
+	toolCalls, err := buildToolCalls(calls, b.toolMap)
+	if err != nil {
+		return nil, err
+	}
+	for _, call := range toolCalls {
 		out <- Msg{
 			Type:  MsgTypeToolCall,
 			Value: call.raw,
@@ -223,20 +178,13 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 		}
 	}
 
-	results := make([]toolResult, len(calls))
-	var wg sync.WaitGroup
-	wg.Add(len(calls))
-	for i, call := range calls {
-		go func(idx int, call toolCall) {
-			defer wg.Done()
-			output, err := call.tool.Call(ctx, call.args)
-			results[idx] = toolResult{output: output, err: err}
-		}(i, call)
+	runner := b.toolRunner
+	if runner == nil {
+		runner = parallelToolRunner{}
 	}
-	wg.Wait()
-
-	outputs := make(responses.ResponseInputParam, 0, len(calls))
-	for i, call := range calls {
+	results := runner.Run(ctx, toolCalls)
+	outputs := make(responses.ResponseInputParam, 0, len(toolCalls))
+	for i, call := range toolCalls {
 		result := results[i]
 		if result.err != nil {
 			return nil, result.err
@@ -316,7 +264,7 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 
 		params := d.buildParams(input, d.state.get())
 		for {
-			resp, err := d.client.Responses.New(ctx, params)
+			resp, err := d.client.NewResponse(ctx, params)
 			if err != nil {
 				out <- Msg{Type: MsgTypeError, Value: err.Error()}
 				return
@@ -345,7 +293,7 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 }
 
 func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
-	stream := s.client.Responses.NewStreaming(ctx, params)
+	stream := s.client.NewStreamingResponse(ctx, params)
 	var completed *responses.Response
 	for stream.Next() {
 		event := stream.Current()
