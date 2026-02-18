@@ -6,6 +6,8 @@ type MsgType int
 
 const (
 	MsgTypeChat MsgType = iota
+	MsgTypeReasoningChat
+	MsgTypeReasoningSummary
 	MsgTypeError
 	MsgTypeToolCall
 	MsgTypeToolResult

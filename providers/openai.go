@@ -12,6 +12,7 @@ import (
 	"github.com/fernandopn/benoid/tools"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 // === Abstractions for testing ===
@@ -69,9 +70,15 @@ type baseOpenAI struct {
 	model            string
 	kind             string
 	maxContextTokens int64
+	params           OpenAIParams
 	toolDefs         []responses.ToolUnionParam
 	toolMap          map[string]tools.Tool
 	toolRunner       toolRunner
+}
+
+type OpenAIParams struct {
+	ReasoningEffort  shared.ReasoningEffort
+	ReasoningSummary shared.ReasoningSummary
 }
 
 type openAIState struct {
@@ -91,7 +98,7 @@ func (s *openAIState) set(id string) {
 	s.mu.Unlock()
 }
 
-func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []tools.Tool) (*baseOpenAI, error) {
+func newBaseOpenAI(ctx context.Context, kind string, model string, params OpenAIParams, toolSet []tools.Tool) (*baseOpenAI, error) {
 	if _, ok := os.LookupEnv("OPENAI_API_KEY"); !ok {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
@@ -101,6 +108,7 @@ func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []too
 		state:      &openAIState{},
 		kind:       kind,
 		toolRunner: parallelToolRunner{},
+		params:     params,
 	}
 	resolved, err := base.resolveModel(ctx, model)
 	if err != nil {
@@ -114,14 +122,20 @@ func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []too
 	return base, nil
 }
 
-func (b *baseOpenAI) buildParams(input string, previousID string) responses.ResponseNewParams {
+func (b *baseOpenAI) buildParamsWithInput(input responses.ResponseNewParamsInputUnion, previousID string) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model: openai.ChatModel(b.model),
-		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(input)},
+		Input: input,
 	}
 	params.Instructions = openai.String(toolBatchingInstruction)
 	if previousID != "" {
 		params.PreviousResponseID = openai.String(previousID)
+	}
+	if b.params.ReasoningEffort != "" || b.params.ReasoningSummary != "" {
+		params.Reasoning = shared.ReasoningParam{
+			Effort:  b.params.ReasoningEffort,
+			Summary: b.params.ReasoningSummary,
+		}
 	}
 	params.ParallelToolCalls = openai.Bool(true)
 	if len(b.toolDefs) > 0 {
@@ -130,20 +144,18 @@ func (b *baseOpenAI) buildParams(input string, previousID string) responses.Resp
 	return params
 }
 
+func (b *baseOpenAI) buildParams(input string, previousID string) responses.ResponseNewParams {
+	return b.buildParamsWithInput(
+		responses.ResponseNewParamsInputUnion{OfString: openai.String(input)},
+		previousID,
+	)
+}
+
 func (b *baseOpenAI) buildToolParams(previousID string, input responses.ResponseInputParam) responses.ResponseNewParams {
-	params := responses.ResponseNewParams{
-		Model: openai.ChatModel(b.model),
-		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: input},
-	}
-	params.Instructions = openai.String(toolBatchingInstruction)
-	if previousID != "" {
-		params.PreviousResponseID = openai.String(previousID)
-	}
-	params.ParallelToolCalls = openai.Bool(true)
-	if len(b.toolDefs) > 0 {
-		params.Tools = b.toolDefs
-	}
-	return params
+	return b.buildParamsWithInput(
+		responses.ResponseNewParamsInputUnion{OfInputItemList: input},
+		previousID,
+	)
 }
 
 func (b *baseOpenAI) initTools(toolSet []tools.Tool) error {
@@ -268,6 +280,30 @@ func (b *baseOpenAI) contextTokensForModel(model string) int64 {
 	return 0
 }
 
+func (b *baseOpenAI) emitReasoningFromResponse(resp *responses.Response, out chan<- Msg) {
+	if resp == nil {
+		return
+	}
+	for _, item := range resp.Output {
+		if item.Type != "reasoning" {
+			continue
+		}
+		reasoning := item.AsReasoning()
+		for _, summary := range reasoning.Summary {
+			if summary.Text == "" {
+				continue
+			}
+			out <- Msg{Type: MsgTypeReasoningSummary, Value: summary.Text}
+		}
+		for _, content := range reasoning.Content {
+			if content.Text == "" {
+				continue
+			}
+			out <- Msg{Type: MsgTypeReasoningChat, Value: content.Text}
+		}
+	}
+}
+
 func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 	if resp == nil || !resp.JSON.Usage.Valid() {
 		return nil
@@ -298,8 +334,8 @@ type StreamingOpenAI struct {
 	*baseOpenAI
 }
 
-func NewStreamingOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*StreamingOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model, toolSet)
+func NewStreamingOpenAI(ctx context.Context, model string, params OpenAIParams, toolSet []tools.Tool) (*StreamingOpenAI, error) {
+	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model, params, toolSet)
 	if err != nil {
 		return nil, err
 	}
@@ -348,6 +384,12 @@ func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.R
 		if event.Type == "response.output_text.delta" && event.Delta != "" {
 			out <- Msg{Type: MsgTypeChat, Value: event.Delta}
 		}
+		if event.Type == "response.reasoning_text.delta" && event.Delta != "" {
+			out <- Msg{Type: MsgTypeReasoningChat, Value: event.Delta}
+		}
+		if event.Type == "response.reasoning_summary_text.delta" && event.Delta != "" {
+			out <- Msg{Type: MsgTypeReasoningSummary, Value: event.Delta}
+		}
 		if event.Type == "response.completed" {
 			completed = &event.Response
 			if event.Response.ID != "" {
@@ -368,8 +410,8 @@ type DirectOpenAI struct {
 	*baseOpenAI
 }
 
-func NewDirectOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*DirectOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model, toolSet)
+func NewDirectOpenAI(ctx context.Context, model string, params OpenAIParams, toolSet []tools.Tool) (*DirectOpenAI, error) {
+	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model, params, toolSet)
 	if err != nil {
 		return nil, err
 	}
@@ -398,6 +440,7 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 				out <- Msg{Type: MsgTypeError, Value: err.Error()}
 				return
 			}
+			d.emitReasoningFromResponse(resp, out)
 			if len(toolOutputs) == 0 {
 				output := strings.TrimSpace(resp.OutputText())
 				if output != "" {

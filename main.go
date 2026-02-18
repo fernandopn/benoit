@@ -12,9 +12,13 @@ import (
 
 	"github.com/fernandopn/benoid/providers"
 	"github.com/fernandopn/benoid/tools"
+	"github.com/openai/openai-go/v3/shared"
 )
 
 func main() {
+	const OPENAI_REASONING_EFFORT = shared.ReasoningEffortHigh
+	const OPENAI_REASONING_SUMMARY = shared.ReasoningSummaryDetailed
+
 	defaultRoot, rootErr := os.Getwd()
 	if rootErr != nil {
 		fmt.Fprintln(os.Stderr, "filesystem init error:", rootErr)
@@ -30,6 +34,10 @@ func main() {
 		provider providers.Provider
 		err      error
 	)
+	openAIParams := providers.OpenAIParams{
+		ReasoningEffort:  OPENAI_REASONING_EFFORT,
+		ReasoningSummary: OPENAI_REASONING_SUMMARY,
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	fs, err := tools.NewRestrictedFS(*fsRoot)
 	if err != nil {
@@ -44,9 +52,9 @@ func main() {
 	}
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
 	case "streamingopenai":
-		provider, err = providers.NewStreamingOpenAI(ctx, *model, toolSet)
+		provider, err = providers.NewStreamingOpenAI(ctx, *model, openAIParams, toolSet)
 	case "directopenai":
-		provider, err = providers.NewDirectOpenAI(ctx, *model, toolSet)
+		provider, err = providers.NewDirectOpenAI(ctx, *model, openAIParams, toolSet)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown provider:", *providerName)
 		os.Exit(1)
@@ -115,6 +123,10 @@ func main() {
 			switch next {
 			case providers.MsgTypeChat:
 				fmt.Fprint(writer, "[assistant]\n")
+			case providers.MsgTypeReasoningChat:
+				fmt.Fprint(writer, "[reasoning]\n")
+			case providers.MsgTypeReasoningSummary:
+				fmt.Fprint(writer, "[reasoning summary]\n")
 			}
 		}
 		msgs := provider.Chat(ctx, text)
@@ -122,6 +134,14 @@ func main() {
 			switch msg.Type {
 			case providers.MsgTypeChat:
 				switchState(providers.MsgTypeChat)
+				fmt.Fprint(writer, msg.Value)
+				writer.Flush()
+			case providers.MsgTypeReasoningChat:
+				switchState(providers.MsgTypeReasoningChat)
+				fmt.Fprint(writer, msg.Value)
+				writer.Flush()
+			case providers.MsgTypeReasoningSummary:
+				switchState(providers.MsgTypeReasoningSummary)
 				fmt.Fprint(writer, msg.Value)
 				writer.Flush()
 			case providers.MsgTypeError:
