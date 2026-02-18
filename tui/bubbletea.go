@@ -505,15 +505,12 @@ func (m model) renderBlock(b block) string {
 	case blockUser:
 		return m.renderUserBlock(b.Text)
 	case blockAssistant:
-		if strings.TrimSpace(b.Text) == "" {
-			return m.assistantLabelStyle.Render("Assistant")
-		}
-		return m.assistantLabelStyle.Render("Assistant") + "\n" + b.Text
+		return strings.TrimSpace(b.Text)
 	case blockReasoning:
 		if strings.TrimSpace(b.Text) == "" {
-			return m.reasoningLabelStyle.Render("Reasoning Summary")
+			return ""
 		}
-		return m.reasoningLabelStyle.Render("Reasoning Summary") + "\n" + m.reasoningTextStyle.Render(b.Text)
+		return m.reasoningTextStyle.Render(b.Text)
 	case blockToolCall:
 		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args")
 	case blockToolResult:
