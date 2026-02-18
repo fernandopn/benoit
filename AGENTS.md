@@ -11,7 +11,9 @@ Minimal terminal chat client for the OpenAI Responses API using the official Go 
    - `go mod tidy`
 2. Build:
    - `go build ./...`
-3. Always run a build after making code changes to verify it still compiles.
+3. Always run `go fmt ./...` after code changes.
+4. Always run `go test ./...` after code changes.
+5. Always run a build after making code changes to verify it still compiles.
 
 ## Conventions
 - Libraries should not create their own contexts. If a context is needed, accept it as an argument and let callers decide timeouts/cancellation.

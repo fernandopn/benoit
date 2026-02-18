@@ -25,7 +25,7 @@ func main() {
 		err      error
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	toolSet := []tools.Tool{tools.NewClockTool()}
+	toolSet := []tools.Tool{tools.NewClockTool(), tools.NewListFilesTool(), tools.NewCurrentDirectoryTool()}
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
 	case "streamingopenai":
 		provider, err = providers.NewStreamingOpenAI(ctx, *model, toolSet)
@@ -71,6 +71,22 @@ func main() {
 			hadError            bool
 			messageTypeHandling *providers.MsgType
 		)
+		formatToolArgs := func(raw string) string {
+			raw = strings.TrimSpace(raw)
+			if raw == "" {
+				return ""
+			}
+			return "args=" + raw
+		}
+		writeIndented := func(text string) {
+			text = strings.TrimRight(text, "\n")
+			if text == "" {
+				return
+			}
+			for _, line := range strings.Split(text, "\n") {
+				fmt.Fprintf(writer, "  %s\n", line)
+			}
+		}
 		switchState := func(next providers.MsgType) {
 			if messageTypeHandling != nil && *messageTypeHandling == next {
 				return
@@ -83,10 +99,6 @@ func main() {
 			switch next {
 			case providers.MsgTypeChat:
 				fmt.Fprint(writer, "[assistant]\n")
-			case providers.MsgTypeToolCall:
-				fmt.Fprint(writer, "[tool call]\n")
-			case providers.MsgTypeToolResult:
-				fmt.Fprint(writer, "[tool response]\n")
 			}
 		}
 		msgs := provider.Chat(ctx, text)
@@ -101,11 +113,17 @@ func main() {
 				fmt.Fprintln(os.Stderr, "request error:", msg.Value)
 			case providers.MsgTypeToolCall:
 				switchState(providers.MsgTypeToolCall)
-				fmt.Fprintf(writer, "name=%s args=%s call_id=%s", msg.Metadata["tool"], msg.Value, msg.Metadata["call_id"])
+				args := formatToolArgs(msg.Value)
+				if args != "" {
+					fmt.Fprintf(writer, "tool call: %s %s id=%s\n", msg.Metadata["tool"], args, msg.Metadata["call_id"])
+				} else {
+					fmt.Fprintf(writer, "tool call: %s id=%s\n", msg.Metadata["tool"], msg.Metadata["call_id"])
+				}
 				writer.Flush()
 			case providers.MsgTypeToolResult:
 				switchState(providers.MsgTypeToolResult)
-				fmt.Fprintf(writer, "name=%s output=%s call_id=%s", msg.Metadata["tool"], msg.Value, msg.Metadata["call_id"])
+				fmt.Fprintf(writer, "tool response: %s id=%s\n", msg.Metadata["tool"], msg.Metadata["call_id"])
+				writeIndented(msg.Value)
 				writer.Flush()
 			}
 		}

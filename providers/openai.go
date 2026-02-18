@@ -167,7 +167,18 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 	if resp == nil || len(resp.Output) == 0 {
 		return nil, nil
 	}
-	var outputs responses.ResponseInputParam
+	type toolCall struct {
+		name   string
+		callID string
+		args   map[string]any
+		raw    string
+		tool   tools.Tool
+	}
+	type toolResult struct {
+		output string
+		err    error
+	}
+	calls := make([]toolCall, 0)
 	for _, item := range resp.Output {
 		if item.Type != "function_call" {
 			continue
@@ -190,27 +201,55 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 		if err != nil {
 			return nil, fmt.Errorf("invalid arguments for %s: %w", call.Name, err)
 		}
+		calls = append(calls, toolCall{
+			name:   call.Name,
+			callID: call.CallID,
+			args:   args,
+			raw:    call.Arguments,
+			tool:   tool,
+		})
+	}
+	if len(calls) == 0 {
+		return nil, nil
+	}
+	for _, call := range calls {
 		out <- Msg{
 			Type:  MsgTypeToolCall,
-			Value: call.Arguments,
+			Value: call.raw,
 			Metadata: map[string]string{
-				"tool":    call.Name,
-				"call_id": call.CallID,
+				"tool":    call.name,
+				"call_id": call.callID,
 			},
 		}
-		result, err := tool.Call(ctx, args)
-		if err != nil {
-			return nil, err
+	}
+
+	results := make([]toolResult, len(calls))
+	var wg sync.WaitGroup
+	wg.Add(len(calls))
+	for i, call := range calls {
+		go func(idx int, call toolCall) {
+			defer wg.Done()
+			output, err := call.tool.Call(ctx, call.args)
+			results[idx] = toolResult{output: output, err: err}
+		}(i, call)
+	}
+	wg.Wait()
+
+	outputs := make(responses.ResponseInputParam, 0, len(calls))
+	for i, call := range calls {
+		result := results[i]
+		if result.err != nil {
+			return nil, result.err
 		}
 		out <- Msg{
 			Type:  MsgTypeToolResult,
-			Value: result,
+			Value: result.output,
 			Metadata: map[string]string{
-				"tool":    call.Name,
-				"call_id": call.CallID,
+				"tool":    call.name,
+				"call_id": call.callID,
 			},
 		}
-		outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.CallID, result))
+		outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.callID, result.output))
 	}
 	return outputs, nil
 }
@@ -245,28 +284,24 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 		defer close(out)
 
 		params := s.buildParams(input, s.state.get())
-		response, err := s.streamResponse(ctx, params, out)
-		if err != nil {
-			out <- Msg{Type: MsgTypeError, Value: err.Error()}
-			return
-		}
-
-		if response == nil {
-			return
-		}
-		toolOutputs, err := s.toolOutputsFromResponse(ctx, response, out)
-		if err != nil {
-			out <- Msg{Type: MsgTypeError, Value: err.Error()}
-			return
-		}
-		if len(toolOutputs) == 0 {
-			return
-		}
-
-		followParams := s.buildToolParams(response.ID, toolOutputs)
-		if _, err := s.streamResponse(ctx, followParams, out); err != nil {
-			out <- Msg{Type: MsgTypeError, Value: err.Error()}
-			return
+		for {
+			response, err := s.streamResponse(ctx, params, out)
+			if err != nil {
+				out <- Msg{Type: MsgTypeError, Value: err.Error()}
+				return
+			}
+			if response == nil {
+				return
+			}
+			toolOutputs, err := s.toolOutputsFromResponse(ctx, response, out)
+			if err != nil {
+				out <- Msg{Type: MsgTypeError, Value: err.Error()}
+				return
+			}
+			if len(toolOutputs) == 0 {
+				return
+			}
+			params = s.buildToolParams(response.ID, toolOutputs)
 		}
 	}()
 
@@ -275,45 +310,34 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 
 func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	out := make(chan Msg, 1)
-	params := d.buildParams(input, d.state.get())
 
 	go func() {
 		defer close(out)
 
-		resp, err := d.client.Responses.New(ctx, params)
-		if err != nil {
-			out <- Msg{Type: MsgTypeError, Value: err.Error()}
-			return
-		}
-		if resp.ID != "" {
-			d.state.set(resp.ID)
-		}
-
-		toolOutputs, err := d.toolOutputsFromResponse(ctx, resp, out)
-		if err != nil {
-			out <- Msg{Type: MsgTypeError, Value: err.Error()}
-			return
-		}
-		if len(toolOutputs) == 0 {
-			output := strings.TrimSpace(resp.OutputText())
-			if output != "" {
-				out <- Msg{Type: MsgTypeChat, Value: output}
+		params := d.buildParams(input, d.state.get())
+		for {
+			resp, err := d.client.Responses.New(ctx, params)
+			if err != nil {
+				out <- Msg{Type: MsgTypeError, Value: err.Error()}
+				return
 			}
-			return
-		}
+			if resp.ID != "" {
+				d.state.set(resp.ID)
+			}
 
-		followParams := d.buildToolParams(resp.ID, toolOutputs)
-		followResp, err := d.client.Responses.New(ctx, followParams)
-		if err != nil {
-			out <- Msg{Type: MsgTypeError, Value: err.Error()}
-			return
-		}
-		if followResp.ID != "" {
-			d.state.set(followResp.ID)
-		}
-		output := strings.TrimSpace(followResp.OutputText())
-		if output != "" {
-			out <- Msg{Type: MsgTypeChat, Value: output}
+			toolOutputs, err := d.toolOutputsFromResponse(ctx, resp, out)
+			if err != nil {
+				out <- Msg{Type: MsgTypeError, Value: err.Error()}
+				return
+			}
+			if len(toolOutputs) == 0 {
+				output := strings.TrimSpace(resp.OutputText())
+				if output != "" {
+					out <- Msg{Type: MsgTypeChat, Value: output}
+				}
+				return
+			}
+			params = d.buildToolParams(resp.ID, toolOutputs)
 		}
 	}()
 
