@@ -11,6 +11,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/fernandopn/benoid/providers"
 )
 
@@ -68,6 +69,7 @@ type model struct {
 	subHeaderStyle lipgloss.Style
 	bodyStyle      lipgloss.Style
 	inputBoxStyle  lipgloss.Style
+	inputBgStyle   lipgloss.Style
 
 	userLabelStyle      lipgloss.Style
 	assistantLabelStyle lipgloss.Style
@@ -102,18 +104,34 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	ta.Focus()
 	ta.Prompt = ""
 	ta.ShowLineNumbers = false
-	ta.SetHeight(3)
+	ta.SetHeight(1)
 	ta.CharLimit = 10000
+	ta.MaxHeight = 4
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	inputBgColor := lipgloss.Color("#1C1C1C")
 	placeholderStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8FB3FF")).
+		Background(inputBgColor).
 		Italic(true)
 	ta.FocusedStyle.Placeholder = placeholderStyle
 	ta.BlurredStyle.Placeholder = placeholderStyle
-	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EDF3"))
-	ta.BlurredStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#B7C0C9"))
+	ta.FocusedStyle.Text = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#E6EDF3")).
+		Background(inputBgColor)
+	ta.BlurredStyle.Text = lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#B7C0C9")).
+		Background(inputBgColor)
+	bgBase := lipgloss.NewStyle().Background(inputBgColor)
+	ta.FocusedStyle.Base = bgBase
+	ta.BlurredStyle.Base = bgBase
+	ta.FocusedStyle.CursorLine = bgBase
+	ta.BlurredStyle.CursorLine = bgBase
+	ta.FocusedStyle.Prompt = bgBase
+	ta.BlurredStyle.Prompt = bgBase
+	ta.FocusedStyle.EndOfBuffer = bgBase
+	ta.BlurredStyle.EndOfBuffer = bgBase
 
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
@@ -133,8 +151,10 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	body := lipgloss.NewStyle().
 		Padding(0, 1)
 
-	inputBox := lipgloss.NewStyle().
-		Padding(0, 1)
+	inputBox := lipgloss.NewStyle()
+
+	inputBg := lipgloss.NewStyle().
+		Background(inputBgColor)
 
 	return model{
 		ctx:      ctx,
@@ -149,6 +169,7 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 		subHeaderStyle: subHeader,
 		bodyStyle:      body,
 		inputBoxStyle:  inputBox,
+		inputBgStyle:   inputBg,
 		userLabelStyle: lipgloss.NewStyle().Foreground(accent).Bold(true),
 		assistantLabelStyle: lipgloss.NewStyle().
 			Foreground(strong).
@@ -187,9 +208,8 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if isSoftNewlineMsg(msg) {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}})
-		return m, cmd
+		m.prepareSoftNewline()
+		msg = tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}}
 	}
 
 	var (
@@ -211,28 +231,14 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input, cmd = m.input.Update(msg)
 		cmds = append(cmds, cmd)
 	}
+	m.adjustInputHeight()
 
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
 
-		headerHeight := 2
-		gapHeight := 1
-		footerHeight := 1
-
-		bodyFrameW, bodyFrameH := m.bodyStyle.GetFrameSize()
-		inputFrameW, inputFrameH := m.inputBoxStyle.GetFrameSize()
-
-		m.input.SetWidth(max(10, msg.Width-inputFrameW))
-		inputHeight := m.input.Height()
-
-		viewportHeight := msg.Height - headerHeight - gapHeight*2 - inputFrameH - inputHeight - bodyFrameH - footerHeight
-		m.vp.Width = max(10, msg.Width-bodyFrameW)
-		m.vp.Height = max(1, viewportHeight)
-
-		m.vp.SetContent(m.renderTranscript())
-		m.vp.GotoBottom()
+		m.relayout(true)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -305,7 +311,7 @@ func (m model) View() string {
 	header := m.headerStyle.Width(width).Render(m.headerLine())
 	subHeader := m.subHeaderStyle.Width(width).Render("Enter to send | /exit to quit | PgUp/PgDn or mouse wheel to scroll")
 	body := m.bodyStyle.Render(m.vp.View())
-	input := m.inputBoxStyle.Render(m.input.View())
+	input := m.renderInputArea()
 
 	lines := []string{
 		header,
@@ -631,12 +637,51 @@ func isSoftNewlineMsg(msg tea.Msg) bool {
 	}
 
 	if seq, ok := decodeUnknownCSI(msg); ok {
-		switch seq {
-		case "13;2u", "27;2;13~":
+		if isShiftEnterSeq(seq) {
 			return true
 		}
 	}
 	return false
+}
+
+func isShiftEnterSeq(seq string) bool {
+	nums := extractCSIInts(seq)
+	if len(nums) == 0 {
+		return false
+	}
+	hasEnter := false
+	hasShift := false
+	for _, n := range nums {
+		if n == 13 {
+			hasEnter = true
+		}
+		if n == 2 {
+			hasShift = true
+		}
+	}
+	return hasEnter && hasShift
+}
+
+func extractCSIInts(seq string) []int {
+	var nums []int
+	n := 0
+	inNum := false
+	for _, r := range seq {
+		if r >= '0' && r <= '9' {
+			n = n*10 + int(r-'0')
+			inNum = true
+			continue
+		}
+		if inNum {
+			nums = append(nums, n)
+			n = 0
+			inNum = false
+		}
+	}
+	if inNum {
+		nums = append(nums, n)
+	}
+	return nums
 }
 
 func decodeUnknownCSI(msg tea.Msg) (string, bool) {
@@ -728,7 +773,7 @@ func parsePercent(value string) (float64, bool) {
 }
 
 func (m model) footerLine() string {
-	width := max(0, m.width-2)
+	width := max(0, m.width)
 	if m.contextLeft == "" {
 		return strings.Repeat(" ", width)
 	}
@@ -738,4 +783,101 @@ func (m model) footerLine() string {
 		pad = 0
 	}
 	return strings.Repeat(" ", pad) + text
+}
+
+func (m *model) adjustInputHeight() {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+	lines := strings.Count(m.input.Value(), "\n") + 1
+	if lines < 1 {
+		lines = 1
+	}
+	if lines > m.input.MaxHeight {
+		lines = m.input.MaxHeight
+	}
+	if lines != m.input.Height() {
+		m.input.SetHeight(lines)
+		m.relayout(false)
+	}
+}
+
+func (m *model) prepareSoftNewline() {
+	lines := strings.Count(m.input.Value(), "\n") + 1
+	nextLines := lines + 1
+	if nextLines > m.input.MaxHeight {
+		nextLines = m.input.MaxHeight
+	}
+	if nextLines > m.input.Height() {
+		m.input.SetHeight(nextLines)
+		m.relayout(false)
+	}
+}
+
+func (m *model) relayout(followBottom bool) {
+	if m.width == 0 || m.height == 0 {
+		return
+	}
+	headerHeight := 2
+	gapHeight := 1
+	footerHeight := 1
+
+	bodyFrameW, bodyFrameH := m.bodyStyle.GetFrameSize()
+	inputFrameW, inputFrameH := m.inputBoxStyle.GetFrameSize()
+
+	contentWidth := max(10, m.width-2-inputFrameW)
+	m.input.SetWidth(contentWidth)
+
+	inputAreaHeight := m.input.Height() + 2 + inputFrameH
+	viewportHeight := m.height - headerHeight - gapHeight*2 - inputAreaHeight - bodyFrameH - footerHeight
+	m.vp.Width = max(10, m.width-bodyFrameW)
+	m.vp.Height = max(1, viewportHeight)
+
+	wasAtBottom := m.vp.AtBottom()
+	m.vp.SetContent(m.renderTranscript())
+	if followBottom || wasAtBottom {
+		m.vp.GotoBottom()
+	}
+}
+
+func (m model) renderInputArea() string {
+	width := max(0, m.width)
+	contentWidth := max(0, width-2)
+	border := m.inputBgStyle.Render(strings.Repeat(" ", width))
+	lines := strings.Split(m.input.View(), "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	bgPrefix := m.inputBgPrefix()
+	for i := range lines {
+		line := lines[i]
+		if contentWidth > 0 && ansi.StringWidth(line) > contentWidth {
+			line = ansi.Truncate(line, contentWidth, "")
+		}
+		line = applyLineBackground(line, bgPrefix)
+		pad := contentWidth - ansi.StringWidth(line)
+		if pad < 0 {
+			pad = 0
+		}
+		lines[i] = m.inputBgStyle.Render(" ") + line + m.inputBgStyle.Render(strings.Repeat(" ", pad)) + m.inputBgStyle.Render(" ")
+	}
+	return strings.Join(append([]string{border}, append(lines, border)...), "\n")
+}
+
+func (m model) inputBgPrefix() string {
+	sample := m.inputBgStyle.Render(" ")
+	idx := strings.Index(sample, " ")
+	if idx == -1 {
+		return ""
+	}
+	return sample[:idx]
+}
+
+func applyLineBackground(line, bgPrefix string) string {
+	if bgPrefix == "" {
+		return line
+	}
+	out := bgPrefix + line
+	out = strings.ReplaceAll(out, "\x1b[0m", "\x1b[0m"+bgPrefix)
+	return out + "\x1b[0m"
 }
