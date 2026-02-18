@@ -295,12 +295,6 @@ func (b *baseOpenAI) emitReasoningFromResponse(resp *responses.Response, out cha
 			}
 			out <- Msg{Type: MsgTypeReasoningSummary, Value: summary.Text}
 		}
-		for _, content := range reasoning.Content {
-			if content.Text == "" {
-				continue
-			}
-			out <- Msg{Type: MsgTypeReasoningChat, Value: content.Text}
-		}
 	}
 }
 
@@ -324,6 +318,12 @@ func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 			"tokens_used":      strconv.FormatInt(used, 10),
 			"tokens_available": strconv.FormatInt(available, 10),
 		},
+	}
+}
+
+func (b *baseOpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) {
+	if usage := b.contextUsageMsg(resp); usage != nil {
+		out <- *usage
 	}
 }
 
@@ -363,9 +363,7 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 				out <- Msg{Type: MsgTypeError, Value: err.Error()}
 				return
 			}
-			if usage := s.contextUsageMsg(response); usage != nil {
-				out <- *usage
-			}
+			s.emitContextUsage(response, out)
 			if len(toolOutputs) == 0 {
 				return
 			}
@@ -383,9 +381,6 @@ func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.R
 		event := stream.Current()
 		if event.Type == "response.output_text.delta" && event.Delta != "" {
 			out <- Msg{Type: MsgTypeChat, Value: event.Delta}
-		}
-		if event.Type == "response.reasoning_text.delta" && event.Delta != "" {
-			out <- Msg{Type: MsgTypeReasoningChat, Value: event.Delta}
 		}
 		if event.Type == "response.reasoning_summary_text.delta" && event.Delta != "" {
 			out <- Msg{Type: MsgTypeReasoningSummary, Value: event.Delta}
@@ -446,13 +441,10 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 				if output != "" {
 					out <- Msg{Type: MsgTypeChat, Value: output}
 				}
-			}
-			if usage := d.contextUsageMsg(resp); usage != nil {
-				out <- *usage
-			}
-			if len(toolOutputs) == 0 {
+				d.emitContextUsage(resp, out)
 				return
 			}
+			d.emitContextUsage(resp, out)
 			params = d.buildToolParams(resp.ID, toolOutputs)
 		}
 	}()

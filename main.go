@@ -123,8 +123,6 @@ func main() {
 			switch next {
 			case providers.MsgTypeChat:
 				fmt.Fprint(writer, "[assistant]\n")
-			case providers.MsgTypeReasoningChat:
-				fmt.Fprint(writer, "[reasoning]\n")
 			case providers.MsgTypeReasoningSummary:
 				fmt.Fprint(writer, "[reasoning summary]\n")
 			}
@@ -132,16 +130,8 @@ func main() {
 		msgs := provider.Chat(ctx, text)
 		for msg := range msgs {
 			switch msg.Type {
-			case providers.MsgTypeChat:
-				switchState(providers.MsgTypeChat)
-				fmt.Fprint(writer, msg.Value)
-				writer.Flush()
-			case providers.MsgTypeReasoningChat:
-				switchState(providers.MsgTypeReasoningChat)
-				fmt.Fprint(writer, msg.Value)
-				writer.Flush()
-			case providers.MsgTypeReasoningSummary:
-				switchState(providers.MsgTypeReasoningSummary)
+			case providers.MsgTypeChat, providers.MsgTypeReasoningSummary:
+				switchState(msg.Type)
 				fmt.Fprint(writer, msg.Value)
 				writer.Flush()
 			case providers.MsgTypeError:
@@ -166,9 +156,9 @@ func main() {
 				used := msg.Metadata["tokens_used"]
 				available := msg.Metadata["tokens_available"]
 				if used != "" && available != "" {
-					fmt.Fprintf(writer, "context usage: %s tokens_used=%s tokens_available=%s\n", msg.Value, used, available)
+					fmt.Fprintf(writer, "[context usage] %s tokens_used=%s tokens_available=%s\n", msg.Value, used, available)
 				} else {
-					fmt.Fprintf(writer, "context usage: %s\n", msg.Value)
+					fmt.Fprintf(writer, "[context usage] %s\n", msg.Value)
 				}
 				writer.Flush()
 			}
