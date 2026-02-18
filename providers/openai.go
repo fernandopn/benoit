@@ -13,6 +13,8 @@ import (
 	"github.com/openai/openai-go/v3/responses"
 )
 
+const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). After receiving a directory listing, batch list_files calls for all subdirectories in one response. Do not serialize independent tool calls."
+
 type baseOpenAI struct {
 	client     openAIClient
 	state      *openAIState
@@ -93,9 +95,11 @@ func (b *baseOpenAI) buildParams(input string, previousID string) responses.Resp
 		Model: openai.ChatModel(b.model),
 		Input: responses.ResponseNewParamsInputUnion{OfString: openai.String(input)},
 	}
+	params.Instructions = openai.String(toolBatchingInstruction)
 	if previousID != "" {
 		params.PreviousResponseID = openai.String(previousID)
 	}
+	params.ParallelToolCalls = openai.Bool(true)
 	if len(b.toolDefs) > 0 {
 		params.Tools = b.toolDefs
 	}
@@ -107,9 +111,11 @@ func (b *baseOpenAI) buildToolParams(previousID string, input responses.Response
 		Model: openai.ChatModel(b.model),
 		Input: responses.ResponseNewParamsInputUnion{OfInputItemList: input},
 	}
+	params.Instructions = openai.String(toolBatchingInstruction)
 	if previousID != "" {
 		params.PreviousResponseID = openai.String(previousID)
 	}
+	params.ParallelToolCalls = openai.Bool(true)
 	if len(b.toolDefs) > 0 {
 		params.Tools = b.toolDefs
 	}
