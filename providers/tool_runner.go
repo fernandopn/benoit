@@ -29,12 +29,12 @@ type toolResult struct {
 }
 
 type toolRunner interface {
-	Run(ctx context.Context, calls []toolCall) []toolResult
+	Run(ctx context.Context, calls []toolCall, emit func(toolCall, toolResult)) []toolResult
 }
 
 type parallelToolRunner struct{}
 
-func (parallelToolRunner) Run(ctx context.Context, calls []toolCall) []toolResult {
+func (parallelToolRunner) Run(ctx context.Context, calls []toolCall, emit func(toolCall, toolResult)) []toolResult {
 	results := make([]toolResult, len(calls))
 	var wg sync.WaitGroup
 	wg.Add(len(calls))
@@ -42,7 +42,11 @@ func (parallelToolRunner) Run(ctx context.Context, calls []toolCall) []toolResul
 		go func(idx int, call toolCall) {
 			defer wg.Done()
 			output, err := call.tool.Call(ctx, call.args)
-			results[idx] = toolResult{output: output, err: err}
+			result := toolResult{output: output, err: err}
+			results[idx] = result
+			if emit != nil {
+				emit(call, result)
+			}
 		}(i, call)
 	}
 	wg.Wait()

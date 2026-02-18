@@ -224,12 +224,18 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 	if runner == nil {
 		runner = parallelToolRunner{}
 	}
-	results := runner.Run(ctx, toolCalls)
-	outputs := make(responses.ResponseInputParam, 0, len(toolCalls))
-	for i, call := range toolCalls {
-		result := results[i]
+	var (
+		mu          sync.Mutex
+		resultsByID = make(map[string]toolResult, len(toolCalls))
+	)
+	results := runner.Run(ctx, toolCalls, func(call toolCall, result toolResult) {
+		if call.callID != "" {
+			mu.Lock()
+			resultsByID[call.callID] = result
+			mu.Unlock()
+		}
 		if result.err != nil {
-			return nil, result.err
+			return
 		}
 		out <- Msg{
 			Type:  MsgTypeToolResult,
@@ -238,6 +244,16 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 				"tool":    call.name,
 				"call_id": call.callID,
 			},
+		}
+	})
+	outputs := make(responses.ResponseInputParam, 0, len(toolCalls))
+	for i, call := range toolCalls {
+		result, ok := resultsByID[call.callID]
+		if !ok && i < len(results) {
+			result = results[i]
+		}
+		if result.err != nil {
+			return nil, result.err
 		}
 		outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.callID, result.output))
 	}

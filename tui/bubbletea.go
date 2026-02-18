@@ -27,6 +27,7 @@ const (
 	blockReasoning
 	blockToolCall
 	blockToolResult
+	blockToolWidget
 	blockContext
 	blockError
 )
@@ -37,9 +38,11 @@ const (
 )
 
 type block struct {
-	Kind blockKind
-	Text string
-	Meta map[string]string
+	Kind       blockKind
+	Text       string
+	Meta       map[string]string
+	ToolArgs   string
+	ToolResult string
 }
 
 type streamStartedMsg struct {
@@ -53,6 +56,8 @@ type streamChunkMsg struct {
 	Msgs []providers.Msg
 	Done bool
 }
+
+type toolSpinnerTick struct{}
 
 type model struct {
 	ctx      context.Context
@@ -68,10 +73,11 @@ type model struct {
 	blocks    []block
 	streaming bool
 
-	streamCh     <-chan providers.Msg
-	streamCancel context.CancelFunc
-	streamSeq    int
-	activeSeq    int
+	streamCh       <-chan providers.Msg
+	streamCancel   context.CancelFunc
+	streamSeq      int
+	activeSeq      int
+	toolBlockIndex map[string]int
 
 	headerStyle    lipgloss.Style
 	subHeaderStyle lipgloss.Style
@@ -83,6 +89,10 @@ type model struct {
 	toolLabelStyle    lipgloss.Style
 	contextLabelStyle lipgloss.Style
 	errorLabelStyle   lipgloss.Style
+	toolBoxStyle      lipgloss.Style
+	toolKeyStyle      lipgloss.Style
+	toolBodyStyle     lipgloss.Style
+	toolNameStyle     lipgloss.Style
 
 	systemTextStyle         lipgloss.Style
 	contextTextStyle        lipgloss.Style
@@ -95,6 +105,10 @@ type model struct {
 
 	contextLeft      string
 	contextLeftStyle lipgloss.Style
+
+	toolSpinnerFrames []string
+	toolSpinnerIndex  int
+	toolSpinnerActive bool
 }
 
 func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration) error {
@@ -165,6 +179,18 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	inputBg := lipgloss.NewStyle().
 		Background(inputBgColor)
 
+	toolBox := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(lipgloss.Color("#3A4452"))
+	toolKey := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#8FB3FF")).
+		Bold(true)
+	toolBody := lipgloss.NewStyle().
+		Foreground(muted)
+	toolName := toolKey.Copy().
+		Bold(false).
+		Italic(true)
+
 	assistantMarkdownStyle := assistantMarkdownStyleConfig()
 	reasoningMarkdownStyle := reasoningMarkdownStyleConfig(muted)
 
@@ -194,6 +220,10 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 		errorLabelStyle: lipgloss.NewStyle().
 			Foreground(warn).
 			Bold(true),
+		toolBoxStyle:  toolBox,
+		toolKeyStyle:  toolKey,
+		toolBodyStyle: toolBody,
+		toolNameStyle: toolName,
 		systemTextStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#7F8DA3")).
 			Italic(true),
@@ -206,8 +236,10 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 			Bold(true),
 		assistantMarkdownStyle: assistantMarkdownStyle,
 		reasoningMarkdownStyle: reasoningMarkdownStyle,
+		toolSpinnerFrames:      []string{"|", "/", "-", "\\"},
 	}
 	m.updateMarkdownRenderers()
+	m.toolBlockIndex = make(map[string]int)
 	return m
 }
 
@@ -256,6 +288,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.cancelStreamIfAny()
 			return m, tea.Quit
 		case tea.KeyEnter:
+			if m.streaming {
+				return m, batchCmds(cmds)
+			}
 			raw := m.input.Value()
 			if strings.TrimSpace(raw) == "" {
 				return m, nil
@@ -307,9 +342,29 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Done {
 			m.streaming = false
 			m.cancelStreamIfAny()
+			cmds = append(cmds, m.syncToolSpinner())
 			return m, batchCmds(cmds)
 		}
+		cmds = append(cmds, m.syncToolSpinner())
 		return m, tea.Batch(append(cmds, readStreamChunk(m.streamCh, 25*time.Millisecond, 64, msg.Seq))...)
+	case toolSpinnerTick:
+		if !m.toolSpinnerActive {
+			return m, batchCmds(cmds)
+		}
+		if !m.hasPendingToolResults() {
+			m.toolSpinnerActive = false
+			return m, batchCmds(cmds)
+		}
+		if len(m.toolSpinnerFrames) > 0 {
+			m.toolSpinnerIndex = (m.toolSpinnerIndex + 1) % len(m.toolSpinnerFrames)
+		}
+		wasAtBottom := m.vp.AtBottom()
+		m.vp.SetContent(m.renderTranscript())
+		if wasAtBottom {
+			m.vp.GotoBottom()
+		}
+		cmds = append(cmds, m.nextToolSpinnerTick())
+		return m, batchCmds(cmds)
 	}
 
 	return m, batchCmds(cmds)
@@ -417,9 +472,9 @@ func (m *model) applyStreamMessages(msgs []providers.Msg) {
 		case providers.MsgTypeReasoningSummary:
 			m.appendToBlock(blockReasoning, msg.Value, nil)
 		case providers.MsgTypeToolCall:
-			m.appendToBlock(blockToolCall, msg.Value, msg.Metadata)
+			m.appendToolCall(msg.Value, msg.Metadata)
 		case providers.MsgTypeToolResult:
-			m.appendToBlock(blockToolResult, msg.Value, msg.Metadata)
+			m.appendToolResult(msg.Value, msg.Metadata)
 		case providers.MsgTypeContextUsage:
 			m.updateContextUsage(msg.Value, msg.Metadata)
 		case providers.MsgTypeError:
@@ -444,6 +499,82 @@ func (m *model) appendToBlock(kind blockKind, text string, meta map[string]strin
 		}
 	}
 	m.appendBlock(kind, text, meta)
+}
+
+func (m *model) appendToolCall(text string, meta map[string]string) {
+	callID := ""
+	toolName := ""
+	if meta != nil {
+		callID = meta["call_id"]
+		toolName = meta["tool"]
+	}
+
+	if callID != "" {
+		if idx, ok := m.toolBlockIndex[callID]; ok && idx >= 0 && idx < len(m.blocks) {
+			block := &m.blocks[idx]
+			if block.Kind != blockToolWidget {
+				return
+			}
+			block.ToolArgs += text
+			ensureToolMeta(block, callID, toolName)
+			return
+		}
+	}
+
+	newBlock := block{
+		Kind:     blockToolWidget,
+		Meta:     cloneMeta(meta),
+		ToolArgs: text,
+	}
+	if callID != "" {
+		ensureToolMeta(&newBlock, callID, toolName)
+		m.toolBlockIndex[callID] = len(m.blocks)
+	}
+	m.blocks = append(m.blocks, newBlock)
+}
+
+func (m *model) appendToolResult(text string, meta map[string]string) {
+	callID := ""
+	toolName := ""
+	if meta != nil {
+		callID = meta["call_id"]
+		toolName = meta["tool"]
+	}
+
+	if callID != "" {
+		if idx, ok := m.toolBlockIndex[callID]; ok && idx >= 0 && idx < len(m.blocks) {
+			block := &m.blocks[idx]
+			if block.Kind != blockToolWidget {
+				return
+			}
+			block.ToolResult += text
+			ensureToolMeta(block, callID, toolName)
+			return
+		}
+	}
+
+	newBlock := block{
+		Kind:       blockToolWidget,
+		Meta:       cloneMeta(meta),
+		ToolResult: text,
+	}
+	if callID != "" {
+		ensureToolMeta(&newBlock, callID, toolName)
+		m.toolBlockIndex[callID] = len(m.blocks)
+	}
+	m.blocks = append(m.blocks, newBlock)
+}
+
+func ensureToolMeta(b *block, callID, toolName string) {
+	if b.Meta == nil {
+		b.Meta = make(map[string]string, 2)
+	}
+	if callID != "" && b.Meta["call_id"] == "" {
+		b.Meta["call_id"] = callID
+	}
+	if toolName != "" && b.Meta["tool"] == "" {
+		b.Meta["tool"] = toolName
+	}
 }
 
 func (m *model) appendBlock(kind blockKind, text string, meta map[string]string) {
@@ -511,6 +642,8 @@ func (m model) renderBlock(b block) string {
 		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args")
 	case blockToolResult:
 		return renderToolBlock(m.toolLabelStyle.Render("Tool Result"), b.Meta, b.Text, "output")
+	case blockToolWidget:
+		return m.renderToolWidget(b)
 	case blockContext:
 		return m.contextLabelStyle.Render("Context Usage") + "\n" + m.contextTextStyle.Render(formatContextUsage(b.Text, b.Meta))
 	case blockError:
@@ -563,6 +696,63 @@ func (m model) renderUserBlock(text string) string {
 
 	out = append(out, blank)
 	return strings.Join(out, "\n")
+}
+
+func (m model) renderToolWidget(b block) string {
+	width := m.vp.Width
+	if width <= 0 {
+		width = 80
+	}
+	boxWidth := width
+	if boxWidth > 2 {
+		boxWidth = width - 2
+	}
+	contentWidth := boxWidth - 2
+	if contentWidth < 1 {
+		contentWidth = 1
+	}
+
+	toolName := ""
+	if b.Meta != nil {
+		toolName = b.Meta["tool"]
+	}
+	if toolName == "" {
+		toolName = "tool"
+	}
+
+	args := compactWhitespace(strings.TrimSpace(b.ToolArgs))
+	result := strings.TrimSpace(b.ToolResult)
+
+	if args == "" {
+		args = "{}"
+	}
+	if result == "" {
+		result = m.toolSpinnerLabel()
+	}
+
+	header := m.toolNameStyle.Render(toolName) + " (" + m.toolBodyStyle.Render(args) + ")"
+	bodyLines := []string{
+		header,
+		m.toolBodyStyle.Render(result),
+	}
+	body := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(bodyLines, "\n"))
+
+	return m.toolBoxStyle.Width(boxWidth).Render(body)
+}
+
+func (m model) toolSpinnerLabel() string {
+	if !m.toolSpinnerActive || len(m.toolSpinnerFrames) == 0 {
+		return "Running..."
+	}
+	frame := m.toolSpinnerFrames[m.toolSpinnerIndex%len(m.toolSpinnerFrames)]
+	return "Running " + frame
+}
+
+func compactWhitespace(value string) string {
+	if value == "" {
+		return ""
+	}
+	return strings.Join(strings.Fields(value), " ")
 }
 
 func assistantMarkdownStyleConfig() glamouransi.StyleConfig {
@@ -656,6 +846,37 @@ func renderMarkdown(text string, renderer *glamour.TermRenderer) string {
 		return strings.TrimSpace(text)
 	}
 	return strings.TrimRight(rendered, "\n")
+}
+
+func (m *model) hasPendingToolResults() bool {
+	for i := range m.blocks {
+		if m.blocks[i].Kind != blockToolWidget {
+			continue
+		}
+		if strings.TrimSpace(m.blocks[i].ToolResult) == "" {
+			return true
+		}
+	}
+	return false
+}
+
+func (m *model) syncToolSpinner() tea.Cmd {
+	if m.hasPendingToolResults() {
+		if !m.toolSpinnerActive {
+			m.toolSpinnerActive = true
+			m.toolSpinnerIndex = 0
+			return m.nextToolSpinnerTick()
+		}
+		return nil
+	}
+	m.toolSpinnerActive = false
+	return nil
+}
+
+func (m model) nextToolSpinnerTick() tea.Cmd {
+	return tea.Tick(140*time.Millisecond, func(time.Time) tea.Msg {
+		return toolSpinnerTick{}
+	})
 }
 
 func strPtr(value string) *string {

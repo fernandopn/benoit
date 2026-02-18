@@ -60,10 +60,11 @@ func functionCallItemRawArgs(t *testing.T, name, callID, rawArgs string) respons
 
 func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 	startCh := make(chan string, 2)
-	release := make(chan struct{})
+	releaseA := make(chan struct{})
+	releaseB := make(chan struct{})
 
-	toolA := &blockingTool{name: "tool_a", startCh: startCh, release: release, output: "out-a"}
-	toolB := &blockingTool{name: "tool_b", startCh: startCh, release: release, output: "out-b"}
+	toolA := &blockingTool{name: "tool_a", startCh: startCh, release: releaseA, output: "out-a"}
+	toolB := &blockingTool{name: "tool_b", startCh: startCh, release: releaseB, output: "out-b"}
 	base := &baseOpenAI{
 		toolMap:    map[string]tools.Tool{"tool_a": toolA, "tool_b": toolB},
 		toolRunner: parallelToolRunner{},
@@ -94,7 +95,38 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 			t.Fatal("timed out waiting for tools to start")
 		}
 	}
-	close(release)
+
+	msg1 := <-out
+	msg2 := <-out
+
+	if msg1.Type != MsgTypeToolCall || msg1.Metadata["call_id"] != "call-1" {
+		t.Fatalf("unexpected msg1: %#v", msg1)
+	}
+	if msg2.Type != MsgTypeToolCall || msg2.Metadata["call_id"] != "call-2" {
+		t.Fatalf("unexpected msg2: %#v", msg2)
+	}
+
+	close(releaseB)
+
+	select {
+	case msg := <-out:
+		if msg.Type != MsgTypeToolResult || msg.Metadata["call_id"] != "call-2" {
+			t.Fatalf("unexpected tool result after releasing tool_b: %#v", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for tool_b result")
+	}
+
+	close(releaseA)
+
+	select {
+	case msg := <-out:
+		if msg.Type != MsgTypeToolResult || msg.Metadata["call_id"] != "call-1" {
+			t.Fatalf("unexpected tool result after releasing tool_a: %#v", msg)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for tool_a result")
+	}
 
 	select {
 	case <-done:
@@ -122,24 +154,6 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 	}
 	if toolOutputs[1].OfFunctionCallOutput.Output.OfString.Value != "out-b" {
 		t.Fatalf("unexpected output for call-2: %q", toolOutputs[1].OfFunctionCallOutput.Output.OfString.Value)
-	}
-
-	msg1 := <-out
-	msg2 := <-out
-	msg3 := <-out
-	msg4 := <-out
-
-	if msg1.Type != MsgTypeToolCall || msg1.Metadata["call_id"] != "call-1" {
-		t.Fatalf("unexpected msg1: %#v", msg1)
-	}
-	if msg2.Type != MsgTypeToolCall || msg2.Metadata["call_id"] != "call-2" {
-		t.Fatalf("unexpected msg2: %#v", msg2)
-	}
-	if msg3.Type != MsgTypeToolResult || msg3.Metadata["call_id"] != "call-1" {
-		t.Fatalf("unexpected msg3: %#v", msg3)
-	}
-	if msg4.Type != MsgTypeToolResult || msg4.Metadata["call_id"] != "call-2" {
-		t.Fatalf("unexpected msg4: %#v", msg4)
 	}
 }
 
