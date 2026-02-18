@@ -10,7 +10,7 @@ official Go SDK.
 
 ## Usage
 
-- Type a line after the `you>` prompt.
+- Type a line after the `>: ` prompt.
 - Submit `/exit` or `/quit` to leave.
 
 ## Flags
@@ -24,8 +24,9 @@ official Go SDK.
   - default: current working directory
 - `-db-path`
   - enable sqlite logging of conversation messages
-- `-simple`
-  - force simple line-based interface (no bubbletea UI)
+- `-tui`
+  - interface mode (`simple` or `bubbletea`)
+  - default: `simple`
 - `-no-tools`
   - disable tools entirely
 - `-tools`
@@ -37,6 +38,6 @@ official Go SDK.
 
 - Tool-backed startup is skipped unless tools are enabled.
 - When no TTY is detected for stdin/stdout, the app automatically uses
-  `-simple` behavior.
+  simple line-based behavior.
 - Storage errors are surfaced into the chat stream as `MsgTypeError` events
   while preserving normal response messages.

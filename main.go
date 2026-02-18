@@ -19,6 +19,7 @@ import (
 func main() {
 	const OPENAI_REASONING_EFFORT = shared.ReasoningEffortHigh
 	const OPENAI_REASONING_SUMMARY = shared.ReasoningSummaryDetailed
+	const defaultTUIMode = "simple"
 
 	defaultRoot, rootErr := os.Getwd()
 	if rootErr != nil {
@@ -29,15 +30,21 @@ func main() {
 	timeout := flag.Duration("timeout", 60*time.Second, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	dbPath := flag.String("db-path", "", "sqlite db path for chat logging")
-	simpleMode := flag.Bool("simple", false, "use simple line-based interface")
+	tuiMode := flag.String("tui", defaultTUIMode, "tui mode: simple or bubbletea")
 	disableTools := flag.Bool("no-tools", false, "disable tool usage")
 	toolsList := flag.String("tools", "", "comma-separated tools to enable when tools are allowed. options: clock,list_files,get_current_directory,read_file (default: all)")
 	flag.Parse()
 
 	var (
-		provider providers.Provider
-		err      error
+		provider      providers.Provider
+		useSimpleMode bool
+		err           error
 	)
+	useSimpleMode, err = parseTUIMode(*tuiMode)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "flag error:", err)
+		os.Exit(1)
+	}
 	openAIParams := providers.OpenAIParams{
 		ReasoningEffort:  OPENAI_REASONING_EFFORT,
 		ReasoningSummary: OPENAI_REASONING_SUMMARY,
@@ -64,7 +71,7 @@ func main() {
 	}
 
 	tuiCtx := context.Background()
-	if err := tui.Run(tuiCtx, provider, *timeout, *simpleMode); err != nil {
+	if err := tui.Run(tuiCtx, provider, *timeout, useSimpleMode); err != nil {
 		fmt.Fprintln(os.Stderr, "tui error:", err)
 		os.Exit(1)
 	}
@@ -138,4 +145,15 @@ func selectedTools(noTools bool, toolsArg, fsRoot string) ([]tools.Tool, error) 
 	}
 
 	return toolSet, nil
+}
+
+func parseTUIMode(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "simple":
+		return true, nil
+	case "bubbletea":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid -tui value %q (use simple or bubbletea)", raw)
+	}
 }
