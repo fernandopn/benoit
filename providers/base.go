@@ -9,6 +9,7 @@ const (
 	MsgTypeError
 	MsgTypeToolCall
 	MsgTypeToolResult
+	MsgTypeContextUsage
 )
 
 // Msg represents a message emitted by a provider.

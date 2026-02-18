@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -16,13 +17,14 @@ import (
 const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). After receiving a directory listing, batch list_files calls for all subdirectories in one response. Do not serialize independent tool calls."
 
 type baseOpenAI struct {
-	client     openAIClient
-	state      *openAIState
-	model      string
-	kind       string
-	toolDefs   []responses.ToolUnionParam
-	toolMap    map[string]tools.Tool
-	toolRunner toolRunner
+	client           openAIClient
+	state            *openAIState
+	model            string
+	kind             string
+	maxContextTokens int64
+	toolDefs         []responses.ToolUnionParam
+	toolMap          map[string]tools.Tool
+	toolRunner       toolRunner
 }
 
 // StreamingOpenAI uses the Responses streaming API.
@@ -84,6 +86,7 @@ func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []too
 		return nil, err
 	}
 	base.model = resolved
+	base.maxContextTokens = base.contextTokensForModel(base.model)
 	if err := base.initTools(toolSet); err != nil {
 		return nil, err
 	}
@@ -231,6 +234,42 @@ func parseToolArgs(raw string) (map[string]any, error) {
 	return args, nil
 }
 
+func (b *baseOpenAI) contextTokensForModel(model string) int64 {
+	model = strings.ToLower(strings.TrimSpace(model))
+	switch {
+	case strings.HasPrefix(model, "gpt-5.2-chat"):
+		return 128000
+	case strings.HasPrefix(model, "gpt-5.2-codex"):
+		return 400000
+	case strings.HasPrefix(model, "gpt-5.2"):
+		return 400000
+	}
+	return 0
+}
+
+func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
+	if resp == nil || !resp.JSON.Usage.Valid() {
+		return nil
+	}
+	used := resp.Usage.TotalTokens
+	if used <= 0 {
+		return nil
+	}
+	available := b.maxContextTokens
+	if available <= 0 {
+		return nil
+	}
+	percentage := (float64(used) / float64(available)) * 100
+	return &Msg{
+		Type:  MsgTypeContextUsage,
+		Value: fmt.Sprintf("%.1f%%", percentage),
+		Metadata: map[string]string{
+			"tokens_used":      strconv.FormatInt(used, 10),
+			"tokens_available": strconv.FormatInt(available, 10),
+		},
+	}
+}
+
 func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	out := make(chan Msg)
 
@@ -251,6 +290,9 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 			if err != nil {
 				out <- Msg{Type: MsgTypeError, Value: err.Error()}
 				return
+			}
+			if usage := s.contextUsageMsg(response); usage != nil {
+				out <- *usage
 			}
 			if len(toolOutputs) == 0 {
 				return
@@ -289,6 +331,11 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 				if output != "" {
 					out <- Msg{Type: MsgTypeChat, Value: output}
 				}
+			}
+			if usage := d.contextUsageMsg(resp); usage != nil {
+				out <- *usage
+			}
+			if len(toolOutputs) == 0 {
 				return
 			}
 			params = d.buildToolParams(resp.ID, toolOutputs)

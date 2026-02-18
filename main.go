@@ -141,6 +141,16 @@ func main() {
 				fmt.Fprintf(writer, "tool response: %s id=%s\n", msg.Metadata["tool"], msg.Metadata["call_id"])
 				writeIndented(msg.Value)
 				writer.Flush()
+			case providers.MsgTypeContextUsage:
+				switchState(providers.MsgTypeContextUsage)
+				used := msg.Metadata["tokens_used"]
+				available := msg.Metadata["tokens_available"]
+				if used != "" && available != "" {
+					fmt.Fprintf(writer, "context usage: %s tokens_used=%s tokens_available=%s\n", msg.Value, used, available)
+				} else {
+					fmt.Fprintf(writer, "context usage: %s\n", msg.Value)
+				}
+				writer.Flush()
 			}
 		}
 		cancel()
