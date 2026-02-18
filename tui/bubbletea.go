@@ -28,6 +28,11 @@ const (
 	blockError
 )
 
+const (
+	USER_BACKGROUND_COLOR = "#1C1C1C"
+	USER_FOREGROUND_COLOR = "#E6EDF3"
+)
+
 type block struct {
 	Kind blockKind
 	Text string
@@ -72,6 +77,7 @@ type model struct {
 	inputBgStyle   lipgloss.Style
 
 	userLabelStyle      lipgloss.Style
+	userTextStyle       lipgloss.Style
 	assistantLabelStyle lipgloss.Style
 	reasoningLabelStyle lipgloss.Style
 	toolLabelStyle      lipgloss.Style
@@ -110,7 +116,7 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
 	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
-	inputBgColor := lipgloss.Color("#1C1C1C")
+	inputBgColor := lipgloss.Color(USER_BACKGROUND_COLOR)
 	placeholderStyle := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8FB3FF")).
 		Background(inputBgColor).
@@ -118,7 +124,7 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	ta.FocusedStyle.Placeholder = placeholderStyle
 	ta.BlurredStyle.Placeholder = placeholderStyle
 	ta.FocusedStyle.Text = lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#E6EDF3")).
+		Foreground(lipgloss.Color(USER_FOREGROUND_COLOR)).
 		Background(inputBgColor)
 	ta.BlurredStyle.Text = lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#B7C0C9")).
@@ -136,7 +142,6 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 
-	accent := lipgloss.Color("81")
 	muted := lipgloss.Color("#95A3B8")
 	strong := lipgloss.Color("231")
 	warn := lipgloss.Color("203")
@@ -170,7 +175,12 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 		bodyStyle:      body,
 		inputBoxStyle:  inputBox,
 		inputBgStyle:   inputBg,
-		userLabelStyle: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		userLabelStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(USER_FOREGROUND_COLOR)).
+			Background(inputBgColor),
+		userTextStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(USER_FOREGROUND_COLOR)).
+			Background(inputBgColor),
 		assistantLabelStyle: lipgloss.NewStyle().
 			Foreground(strong).
 			Bold(true),
@@ -493,7 +503,7 @@ func (m model) renderTranscript() string {
 func (m model) renderBlock(b block) string {
 	switch b.Kind {
 	case blockUser:
-		return m.userLabelStyle.Render("You") + "\n" + b.Text
+		return m.renderUserBlock(b.Text)
 	case blockAssistant:
 		if strings.TrimSpace(b.Text) == "" {
 			return m.assistantLabelStyle.Render("Assistant")
@@ -517,6 +527,49 @@ func (m model) renderBlock(b block) string {
 	default:
 		return b.Text
 	}
+}
+
+func (m model) renderUserBlock(text string) string {
+	width := m.vp.Width
+	if width <= 0 {
+		return m.userTextStyle.Render(text)
+	}
+	if width <= 2 {
+		return m.inputBgStyle.Render(strings.Repeat(" ", width))
+	}
+
+	lines := strings.Split(text, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+
+	bgPrefix := m.inputBgPrefix()
+	leftPad := m.inputBgStyle.Render(" ")
+	rightPad := m.inputBgStyle.Render(" ")
+	innerWidth := width - 2
+	blank := leftPad + m.inputBgStyle.Render(strings.Repeat(" ", innerWidth)) + rightPad
+	out := make([]string, 0, len(lines)+2)
+	out = append(out, blank)
+
+	for _, line := range lines {
+		raw := line
+		if ansi.StringWidth(raw) > innerWidth {
+			raw = ansi.Truncate(raw, innerWidth, "")
+		}
+		styled := m.userTextStyle.Render(raw)
+		styled = applyLineBackground(styled, bgPrefix)
+		pad := innerWidth - ansi.StringWidth(styled)
+		if pad < 0 {
+			pad = 0
+		}
+		if pad > 0 {
+			styled += m.inputBgStyle.Render(strings.Repeat(" ", pad))
+		}
+		out = append(out, leftPad+styled+rightPad)
+	}
+
+	out = append(out, blank)
+	return strings.Join(out, "\n")
 }
 
 func renderToolBlock(title string, meta map[string]string, body string, bodyLabel string) string {
