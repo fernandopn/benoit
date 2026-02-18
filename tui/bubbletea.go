@@ -1,0 +1,726 @@
+package tui
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/viewport"
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
+	"github.com/fernandopn/benoid/providers"
+)
+
+type blockKind int
+
+const (
+	blockSystem blockKind = iota
+	blockUser
+	blockAssistant
+	blockReasoning
+	blockToolCall
+	blockToolResult
+	blockContext
+	blockError
+)
+
+type block struct {
+	Kind blockKind
+	Text string
+	Meta map[string]string
+}
+
+type streamStartedMsg struct {
+	Seq    int
+	Ch     <-chan providers.Msg
+	Cancel context.CancelFunc
+}
+
+type streamChunkMsg struct {
+	Seq  int
+	Msgs []providers.Msg
+	Done bool
+}
+
+type model struct {
+	ctx      context.Context
+	provider providers.Provider
+	timeout  time.Duration
+
+	vp    viewport.Model
+	input textarea.Model
+
+	width  int
+	height int
+
+	blocks    []block
+	streaming bool
+
+	streamCh     <-chan providers.Msg
+	streamCancel context.CancelFunc
+	streamSeq    int
+	activeSeq    int
+
+	headerStyle    lipgloss.Style
+	subHeaderStyle lipgloss.Style
+	bodyStyle      lipgloss.Style
+	inputBoxStyle  lipgloss.Style
+
+	userLabelStyle      lipgloss.Style
+	assistantLabelStyle lipgloss.Style
+	reasoningLabelStyle lipgloss.Style
+	toolLabelStyle      lipgloss.Style
+	contextLabelStyle   lipgloss.Style
+	errorLabelStyle     lipgloss.Style
+
+	systemTextStyle    lipgloss.Style
+	reasoningTextStyle lipgloss.Style
+	contextTextStyle   lipgloss.Style
+	errorTextStyle     lipgloss.Style
+
+	contextLeft      string
+	contextLeftStyle lipgloss.Style
+}
+
+func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration) error {
+	m := newModel(ctx, provider, timeout)
+	prog := tea.NewProgram(
+		m,
+		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
+	)
+	_, err := prog.Run()
+	return err
+}
+
+func newModel(ctx context.Context, provider providers.Provider, timeout time.Duration) model {
+	ta := textarea.New()
+	ta.Placeholder = "Send a message... (Shift+Enter for newline)"
+	ta.Focus()
+	ta.Prompt = ""
+	ta.ShowLineNumbers = false
+	ta.SetHeight(3)
+	ta.CharLimit = 10000
+	ta.KeyMap.InsertNewline.SetEnabled(false)
+	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	ta.BlurredStyle.CursorLine = lipgloss.NewStyle()
+	placeholderStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#8FB3FF")).
+		Italic(true)
+	ta.FocusedStyle.Placeholder = placeholderStyle
+	ta.BlurredStyle.Placeholder = placeholderStyle
+	ta.FocusedStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#E6EDF3"))
+	ta.BlurredStyle.Text = lipgloss.NewStyle().Foreground(lipgloss.Color("#B7C0C9"))
+
+	vp := viewport.New(0, 0)
+	vp.MouseWheelEnabled = true
+
+	accent := lipgloss.Color("81")
+	muted := lipgloss.Color("#95A3B8")
+	strong := lipgloss.Color("231")
+	warn := lipgloss.Color("203")
+
+	header := lipgloss.NewStyle().
+		Padding(0, 1).
+		Foreground(strong)
+	subHeader := lipgloss.NewStyle().
+		Padding(0, 1).
+		Foreground(muted)
+
+	body := lipgloss.NewStyle().
+		Padding(0, 1)
+
+	inputBox := lipgloss.NewStyle().
+		Padding(0, 1)
+
+	return model{
+		ctx:      ctx,
+		provider: provider,
+		timeout:  timeout,
+		vp:       vp,
+		input:    ta,
+		blocks: []block{
+			{Kind: blockSystem, Text: "Welcome. Type a prompt and press Enter."},
+		},
+		headerStyle:    header,
+		subHeaderStyle: subHeader,
+		bodyStyle:      body,
+		inputBoxStyle:  inputBox,
+		userLabelStyle: lipgloss.NewStyle().Foreground(accent).Bold(true),
+		assistantLabelStyle: lipgloss.NewStyle().
+			Foreground(strong).
+			Bold(true),
+		reasoningLabelStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8FA0B8")).
+			Bold(true),
+		toolLabelStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#9CB6FF")).
+			Bold(true),
+		contextLabelStyle: lipgloss.NewStyle().
+			Foreground(muted).
+			Bold(true),
+		errorLabelStyle: lipgloss.NewStyle().
+			Foreground(warn).
+			Bold(true),
+		systemTextStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#7F8DA3")).
+			Italic(true),
+		reasoningTextStyle: lipgloss.NewStyle().
+			Foreground(muted).
+			Italic(true),
+		contextTextStyle: lipgloss.NewStyle().
+			Foreground(muted),
+		errorTextStyle: lipgloss.NewStyle().
+			Foreground(warn),
+		contextLeftStyle: lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#8FB3FF")).
+			Bold(true),
+	}
+}
+
+func (m model) Init() tea.Cmd {
+	return textarea.Blink
+}
+
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if isSoftNewlineMsg(msg) {
+		var cmd tea.Cmd
+		m.input, cmd = m.input.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'\n'}})
+		return m, cmd
+	}
+
+	var (
+		cmds []tea.Cmd
+		cmd  tea.Cmd
+	)
+
+	switch typed := msg.(type) {
+	case tea.KeyMsg:
+		if isScrollKey(typed) {
+			m.vp, cmd = m.vp.Update(msg)
+			cmds = append(cmds, cmd)
+		}
+		m.input, cmd = m.input.Update(msg)
+		cmds = append(cmds, cmd)
+	default:
+		m.vp, cmd = m.vp.Update(msg)
+		cmds = append(cmds, cmd)
+		m.input, cmd = m.input.Update(msg)
+		cmds = append(cmds, cmd)
+	}
+
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+
+		headerHeight := 2
+		gapHeight := 1
+
+		bodyFrameW, bodyFrameH := m.bodyStyle.GetFrameSize()
+		inputFrameW, inputFrameH := m.inputBoxStyle.GetFrameSize()
+
+		m.input.SetWidth(max(10, msg.Width-inputFrameW))
+		inputHeight := m.input.Height()
+
+		viewportHeight := msg.Height - headerHeight - gapHeight*2 - inputFrameH - inputHeight - bodyFrameH
+		m.vp.Width = max(10, msg.Width-bodyFrameW)
+		m.vp.Height = max(1, viewportHeight)
+
+		m.vp.SetContent(m.renderTranscript())
+		m.vp.GotoBottom()
+		return m, nil
+
+	case tea.KeyMsg:
+		switch msg.Type {
+		case tea.KeyCtrlC:
+			m.cancelStreamIfAny()
+			return m, tea.Quit
+		case tea.KeyEnter:
+			raw := m.input.Value()
+			if strings.TrimSpace(raw) == "" {
+				return m, nil
+			}
+			prompt := strings.TrimRight(raw, "\n")
+			if prompt == "/exit" || prompt == "/quit" {
+				m.cancelStreamIfAny()
+				return m, tea.Quit
+			}
+
+			m.cancelStreamIfAny()
+			m.blocks = append(m.blocks, block{Kind: blockUser, Text: prompt})
+			m.input.Reset()
+
+			m.vp.SetContent(m.renderTranscript())
+			m.vp.GotoBottom()
+
+			m.streaming = true
+			m.streamSeq++
+			m.activeSeq = m.streamSeq
+			return m, tea.Batch(append(cmds, startStream(m.ctx, m.provider, prompt, m.timeout, m.activeSeq))...)
+		}
+
+	case streamStartedMsg:
+		if msg.Seq != m.activeSeq {
+			if msg.Cancel != nil {
+				msg.Cancel()
+			}
+			return m, batchCmds(cmds)
+		}
+		m.streamCh = msg.Ch
+		m.streamCancel = msg.Cancel
+		return m, tea.Batch(append(cmds, readStreamChunk(m.streamCh, 25*time.Millisecond, 64, msg.Seq))...)
+
+	case streamChunkMsg:
+		if msg.Seq != m.activeSeq {
+			return m, batchCmds(cmds)
+		}
+
+		wasAtBottom := m.vp.AtBottom()
+		if len(msg.Msgs) > 0 {
+			m.applyStreamMessages(msg.Msgs)
+			m.vp.SetContent(m.renderTranscript())
+		}
+		if wasAtBottom {
+			m.vp.GotoBottom()
+		}
+
+		if msg.Done {
+			m.streaming = false
+			m.cancelStreamIfAny()
+			return m, batchCmds(cmds)
+		}
+		return m, tea.Batch(append(cmds, readStreamChunk(m.streamCh, 25*time.Millisecond, 64, msg.Seq))...)
+	}
+
+	return m, batchCmds(cmds)
+}
+
+func (m model) View() string {
+	header := m.headerStyle.Render(m.headerLine())
+	subHeader := m.subHeaderStyle.Render("Enter to send | /exit to quit | PgUp/PgDn or mouse wheel to scroll")
+	body := m.bodyStyle.Render(m.vp.View())
+	input := m.inputBoxStyle.Render(m.input.View())
+
+	lines := []string{
+		header,
+		subHeader,
+		"",
+		body,
+		"",
+		input,
+	}
+	if footer := m.footerLine(); footer != "" {
+		lines = append(lines, footer)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) headerLine() string {
+	left := fmt.Sprintf("Benoid · %s", m.provider.Name())
+	right := "ready"
+	if m.streaming {
+		right = "streaming..."
+	}
+
+	leftStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("81")).Bold(true)
+	rightStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#95A3B8"))
+	if m.streaming {
+		rightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)
+	}
+	leftText := leftStyle.Render(left)
+	rightText := rightStyle.Render(right)
+
+	width := max(0, m.width-2)
+	gap := width - lipgloss.Width(leftText) - lipgloss.Width(rightText)
+	if gap < 1 {
+		gap = 1
+	}
+	return leftText + strings.Repeat(" ", gap) + rightText
+}
+
+func startStream(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration, seq int) tea.Cmd {
+	return func() tea.Msg {
+		reqCtx, cancel := context.WithTimeout(ctx, timeout)
+		ch := provider.Chat(reqCtx, prompt)
+		return streamStartedMsg{Seq: seq, Ch: ch, Cancel: cancel}
+	}
+}
+
+func readStreamChunk(ch <-chan providers.Msg, maxWait time.Duration, maxMsgs int, seq int) tea.Cmd {
+	return func() tea.Msg {
+		var items []providers.Msg
+
+		first, ok := <-ch
+		if !ok {
+			return streamChunkMsg{Seq: seq, Done: true}
+		}
+		items = append(items, first)
+
+		timer := time.NewTimer(maxWait)
+		defer timer.Stop()
+
+		for len(items) < maxMsgs {
+			select {
+			case msg, ok := <-ch:
+				if !ok {
+					return streamChunkMsg{Seq: seq, Msgs: items, Done: true}
+				}
+				items = append(items, msg)
+			case <-timer.C:
+				return streamChunkMsg{Seq: seq, Msgs: items, Done: false}
+			}
+		}
+
+		return streamChunkMsg{Seq: seq, Msgs: items, Done: false}
+	}
+}
+
+func (m *model) applyStreamMessages(msgs []providers.Msg) {
+	for _, msg := range msgs {
+		switch msg.Type {
+		case providers.MsgTypeChat:
+			m.appendToBlock(blockAssistant, msg.Value, nil)
+		case providers.MsgTypeReasoningSummary:
+			m.appendToBlock(blockReasoning, msg.Value, nil)
+		case providers.MsgTypeToolCall:
+			m.appendToBlock(blockToolCall, msg.Value, msg.Metadata)
+		case providers.MsgTypeToolResult:
+			m.appendToBlock(blockToolResult, msg.Value, msg.Metadata)
+		case providers.MsgTypeContextUsage:
+			m.updateContextUsage(msg.Value, msg.Metadata)
+		case providers.MsgTypeError:
+			m.appendBlock(blockError, msg.Value, msg.Metadata)
+			m.streaming = false
+			m.cancelStreamIfAny()
+		}
+	}
+}
+
+func (m *model) appendToBlock(kind blockKind, text string, meta map[string]string) {
+	if kind == blockContext || kind == blockError {
+		m.appendBlock(kind, text, meta)
+		return
+	}
+
+	if len(m.blocks) > 0 {
+		last := &m.blocks[len(m.blocks)-1]
+		if last.Kind == kind && compatibleMeta(kind, last.Meta, meta) {
+			last.Text += text
+			return
+		}
+	}
+	m.appendBlock(kind, text, meta)
+}
+
+func (m *model) appendBlock(kind blockKind, text string, meta map[string]string) {
+	m.blocks = append(m.blocks, block{
+		Kind: kind,
+		Text: text,
+		Meta: cloneMeta(meta),
+	})
+}
+
+func compatibleMeta(kind blockKind, current, incoming map[string]string) bool {
+	if kind != blockToolCall && kind != blockToolResult {
+		return true
+	}
+	if current == nil || incoming == nil {
+		return false
+	}
+	if current["call_id"] == "" || incoming["call_id"] == "" {
+		return false
+	}
+	return current["call_id"] == incoming["call_id"]
+}
+
+func cloneMeta(meta map[string]string) map[string]string {
+	if len(meta) == 0 {
+		return nil
+	}
+	clone := make(map[string]string, len(meta))
+	for k, v := range meta {
+		clone[k] = v
+	}
+	return clone
+}
+
+func (m model) renderTranscript() string {
+	var b strings.Builder
+	rendered := 0
+	for _, block := range m.blocks {
+		segment := m.renderBlock(block)
+		if strings.TrimSpace(segment) == "" {
+			continue
+		}
+		if rendered > 0 {
+			b.WriteString("\n\n")
+		}
+		b.WriteString(segment)
+		rendered++
+	}
+	content := strings.TrimSpace(b.String())
+	if m.vp.Width > 0 {
+		return lipgloss.NewStyle().Width(m.vp.Width).Render(content)
+	}
+	return content
+}
+
+func (m model) renderBlock(b block) string {
+	switch b.Kind {
+	case blockUser:
+		return m.userLabelStyle.Render("You") + "\n" + b.Text
+	case blockAssistant:
+		if strings.TrimSpace(b.Text) == "" {
+			return m.assistantLabelStyle.Render("Assistant")
+		}
+		return m.assistantLabelStyle.Render("Assistant") + "\n" + b.Text
+	case blockReasoning:
+		if strings.TrimSpace(b.Text) == "" {
+			return m.reasoningLabelStyle.Render("Reasoning Summary")
+		}
+		return m.reasoningLabelStyle.Render("Reasoning Summary") + "\n" + m.reasoningTextStyle.Render(b.Text)
+	case blockToolCall:
+		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args")
+	case blockToolResult:
+		return renderToolBlock(m.toolLabelStyle.Render("Tool Result"), b.Meta, b.Text, "output")
+	case blockContext:
+		return m.contextLabelStyle.Render("Context Usage") + "\n" + m.contextTextStyle.Render(formatContextUsage(b.Text, b.Meta))
+	case blockError:
+		return m.errorLabelStyle.Render("Error") + "\n" + m.errorTextStyle.Render(b.Text)
+	case blockSystem:
+		return m.systemTextStyle.Render(b.Text)
+	default:
+		return b.Text
+	}
+}
+
+func renderToolBlock(title string, meta map[string]string, body string, bodyLabel string) string {
+	var b strings.Builder
+	b.WriteString(title)
+
+	details := []string{}
+	if meta != nil {
+		if tool := meta["tool"]; tool != "" {
+			details = append(details, "tool: "+tool)
+		}
+		if id := meta["call_id"]; id != "" {
+			details = append(details, "id: "+id)
+		}
+	}
+	if len(details) > 0 {
+		b.WriteString("\n")
+		b.WriteString(indentLines(strings.Join(details, "\n"), "  "))
+	}
+
+	body = strings.TrimSpace(body)
+	if body != "" {
+		b.WriteString("\n  " + bodyLabel + ":\n")
+		b.WriteString(indentLines(body, "    "))
+	}
+	return b.String()
+}
+
+func formatContextUsage(text string, meta map[string]string) string {
+	var b strings.Builder
+	base := strings.TrimSpace(text)
+	if base != "" {
+		b.WriteString(base)
+	}
+	if meta != nil {
+		used := meta["tokens_used"]
+		available := meta["tokens_available"]
+		if used != "" || available != "" {
+			if b.Len() > 0 {
+				b.WriteString(" ")
+			}
+			if used != "" {
+				b.WriteString("tokens_used=" + used)
+			}
+			if available != "" {
+				if used != "" {
+					b.WriteString(" ")
+				}
+				b.WriteString("tokens_available=" + available)
+			}
+		}
+	}
+	return b.String()
+}
+
+func indentLines(text, prefix string) string {
+	text = strings.TrimRight(text, "\n")
+	if text == "" {
+		return ""
+	}
+	lines := strings.Split(text, "\n")
+	for i := range lines {
+		lines[i] = prefix + lines[i]
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m *model) cancelStreamIfAny() {
+	if m.streamCancel != nil {
+		m.streamCancel()
+	}
+	m.streamCancel = nil
+	m.streamCh = nil
+}
+
+func isScrollKey(msg tea.KeyMsg) bool {
+	switch msg.Type {
+	case tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		return true
+	case tea.KeyCtrlU, tea.KeyCtrlD:
+		return true
+	default:
+		return false
+	}
+}
+
+func batchCmds(cmds []tea.Cmd) tea.Cmd {
+	if len(cmds) == 0 {
+		return nil
+	}
+	return tea.Batch(cmds...)
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func isSoftNewlineMsg(msg tea.Msg) bool {
+	if km, ok := msg.(tea.KeyMsg); ok {
+		if km.String() == "shift+enter" {
+			return true
+		}
+		if km.Type == tea.KeyEnter && km.Alt {
+			return true
+		}
+		if km.Type == tea.KeyCtrlJ {
+			return true
+		}
+		if km.Type == tea.KeyCtrlM && km.Alt {
+			return true
+		}
+		if km.Type == tea.KeyRunes && len(km.Runes) == 1 && km.Runes[0] == '\n' {
+			return true
+		}
+	}
+
+	if seq, ok := decodeUnknownCSI(msg); ok {
+		switch seq {
+		case "13;2u", "27;2;13~":
+			return true
+		}
+	}
+	return false
+}
+
+func decodeUnknownCSI(msg tea.Msg) (string, bool) {
+	stringer, ok := msg.(fmt.Stringer)
+	if !ok {
+		return "", false
+	}
+	text := stringer.String()
+	if !strings.HasPrefix(text, "?CSI[") || !strings.HasSuffix(text, "]?") {
+		return "", false
+	}
+	payload := strings.TrimSuffix(strings.TrimPrefix(text, "?CSI["), "]?")
+	fields := strings.Fields(payload)
+	if len(fields) == 0 {
+		return "", false
+	}
+	bytes := make([]byte, 0, len(fields))
+	for _, field := range fields {
+		n, err := strconv.Atoi(field)
+		if err != nil || n < 0 || n > 255 {
+			return "", false
+		}
+		bytes = append(bytes, byte(n))
+	}
+	return string(bytes), true
+}
+
+func (m *model) updateContextUsage(value string, meta map[string]string) {
+	left, ok := contextLeftPercent(value, meta)
+	if !ok {
+		return
+	}
+	if left < 0 {
+		left = 0
+	}
+	if left > 100 {
+		left = 100
+	}
+	if left >= 99.95 {
+		m.contextLeft = "100% context left"
+		return
+	}
+	m.contextLeft = fmt.Sprintf("%.1f%% context left", left)
+}
+
+func contextLeftPercent(value string, meta map[string]string) (float64, bool) {
+	if percentUsed, ok := parsePercent(value); ok {
+		return 100 - percentUsed, true
+	}
+	if meta != nil {
+		used, usedOK := parseFloatLoose(meta["tokens_used"])
+		avail, availOK := parseFloatLoose(meta["tokens_available"])
+		if usedOK && availOK {
+			if avail <= 0 {
+				return 0, false
+			}
+			if avail < used {
+				total := used + avail
+				if total > 0 {
+					return (avail / total) * 100, true
+				}
+			}
+			return ((avail - used) / avail) * 100, true
+		}
+	}
+	return 0, false
+}
+
+func parseFloatLoose(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
+	}
+	value = strings.ReplaceAll(value, ",", "")
+	num, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, false
+	}
+	return num, true
+}
+
+func parsePercent(value string) (float64, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "%")
+	if value == "" {
+		return 0, false
+	}
+	return parseFloatLoose(value)
+}
+
+func (m model) footerLine() string {
+	if m.contextLeft == "" {
+		return ""
+	}
+	text := m.contextLeftStyle.Render(m.contextLeft)
+	width := max(0, m.width-2)
+	pad := width - lipgloss.Width(text)
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + text
+}

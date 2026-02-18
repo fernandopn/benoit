@@ -64,5 +64,9 @@ func main() {
 	}
 	cancel()
 
-	tui.RunSimple(provider, *timeout)
+	tuiCtx := context.Background()
+	if err := tui.RunBubbleTea(tuiCtx, provider, *timeout); err != nil {
+		fmt.Fprintln(os.Stderr, "tui error:", err)
+		os.Exit(1)
+	}
 }
