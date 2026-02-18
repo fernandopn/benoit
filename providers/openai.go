@@ -25,7 +25,6 @@ type responseStream interface {
 
 type openAIClient interface {
 	ListModels(ctx context.Context) ([]string, error)
-	NewResponse(ctx context.Context, params responses.ResponseNewParams) (*responses.Response, error)
 	NewStreamingResponse(ctx context.Context, params responses.ResponseNewParams) responseStream
 }
 
@@ -52,23 +51,17 @@ func (a *openAIClientAdapter) ListModels(ctx context.Context) ([]string, error) 
 	return models, nil
 }
 
-func (a *openAIClientAdapter) NewResponse(ctx context.Context, params responses.ResponseNewParams) (*responses.Response, error) {
-	return a.client.Responses.New(ctx, params)
-}
-
 func (a *openAIClientAdapter) NewStreamingResponse(ctx context.Context, params responses.ResponseNewParams) responseStream {
 	return a.client.Responses.NewStreaming(ctx, params)
 }
 
-// === Generic OpenAI ===
-
 const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). After receiving a directory listing, batch list_files calls for all subdirectories in one response. Do not serialize independent tool calls."
 
-type baseOpenAI struct {
+// OpenAI uses the Responses streaming API.
+type OpenAI struct {
 	client           openAIClient
 	state            *openAIState
 	model            string
-	kind             string
 	maxContextTokens int64
 	params           OpenAIParams
 	toolDefs         []responses.ToolUnionParam
@@ -98,31 +91,30 @@ func (s *openAIState) set(id string) {
 	s.mu.Unlock()
 }
 
-func newBaseOpenAI(ctx context.Context, kind string, model string, params OpenAIParams, toolSet []tools.Tool) (*baseOpenAI, error) {
+func newOpenAI(model string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
 	if _, ok := os.LookupEnv("OPENAI_API_KEY"); !ok {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return nil, fmt.Errorf("model is required")
+	}
 
-	base := &baseOpenAI{
+	provider := &OpenAI{
 		client:     newOpenAIClientAdapter(),
 		state:      &openAIState{},
-		kind:       kind,
+		model:      model,
 		toolRunner: parallelToolRunner{},
 		params:     params,
 	}
-	resolved, err := base.resolveModel(ctx, model)
-	if err != nil {
+	provider.maxContextTokens = provider.contextTokensForModel(provider.model)
+	if err := provider.initTools(toolSet); err != nil {
 		return nil, err
 	}
-	base.model = resolved
-	base.maxContextTokens = base.contextTokensForModel(base.model)
-	if err := base.initTools(toolSet); err != nil {
-		return nil, err
-	}
-	return base, nil
+	return provider, nil
 }
 
-func (b *baseOpenAI) buildParamsWithInput(input responses.ResponseNewParamsInputUnion, previousID string) responses.ResponseNewParams {
+func (b *OpenAI) buildParamsWithInput(input responses.ResponseNewParamsInputUnion, previousID string) responses.ResponseNewParams {
 	params := responses.ResponseNewParams{
 		Model: openai.ChatModel(b.model),
 		Input: input,
@@ -144,21 +136,21 @@ func (b *baseOpenAI) buildParamsWithInput(input responses.ResponseNewParamsInput
 	return params
 }
 
-func (b *baseOpenAI) buildParams(input string, previousID string) responses.ResponseNewParams {
+func (b *OpenAI) buildParams(input string, previousID string) responses.ResponseNewParams {
 	return b.buildParamsWithInput(
 		responses.ResponseNewParamsInputUnion{OfString: openai.String(input)},
 		previousID,
 	)
 }
 
-func (b *baseOpenAI) buildToolParams(previousID string, input responses.ResponseInputParam) responses.ResponseNewParams {
+func (b *OpenAI) buildToolParams(previousID string, input responses.ResponseInputParam) responses.ResponseNewParams {
 	return b.buildParamsWithInput(
 		responses.ResponseNewParamsInputUnion{OfInputItemList: input},
 		previousID,
 	)
 }
 
-func (b *baseOpenAI) initTools(toolSet []tools.Tool) error {
+func (b *OpenAI) initTools(toolSet []tools.Tool) error {
 	if len(toolSet) == 0 {
 		return nil
 	}
@@ -181,26 +173,15 @@ func (b *baseOpenAI) initTools(toolSet []tools.Tool) error {
 	return nil
 }
 
-func (b *baseOpenAI) resolveModel(ctx context.Context, model string) (string, error) {
-	models, err := b.ListModels(ctx)
-	if err != nil {
-		return "", err
-	}
-	if modelInList(models, model) {
-		return model, nil
-	}
-	return "", fmt.Errorf("model not supported: %s. Available models: %s", model, strings.Join(models, ", "))
-}
-
-func (b *baseOpenAI) ListModels(ctx context.Context) ([]string, error) {
+func (b *OpenAI) ListModels(ctx context.Context) ([]string, error) {
 	return b.client.ListModels(ctx)
 }
 
-func (b *baseOpenAI) Name() string {
-	return fmt.Sprintf("%s %s", b.kind, b.model)
+func (b *OpenAI) Name() string {
+	return fmt.Sprintf("OpenAI %s", b.model)
 }
 
-func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {
+func (b *OpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {
 	calls := functionCallsFromResponse(resp)
 	if len(calls) == 0 {
 		return nil, nil
@@ -260,15 +241,6 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 	return outputs, nil
 }
 
-func modelInList(models []string, value string) bool {
-	for _, model := range models {
-		if model == value {
-			return true
-		}
-	}
-	return false
-}
-
 func parseToolArgs(raw string) (map[string]any, error) {
 	if strings.TrimSpace(raw) == "" {
 		return map[string]any{}, nil
@@ -283,7 +255,7 @@ func parseToolArgs(raw string) (map[string]any, error) {
 	return args, nil
 }
 
-func (b *baseOpenAI) contextTokensForModel(model string) int64 {
+func (b *OpenAI) contextTokensForModel(model string) int64 {
 	model = strings.ToLower(strings.TrimSpace(model))
 	switch {
 	case strings.HasPrefix(model, "gpt-5.2-chat"):
@@ -296,25 +268,7 @@ func (b *baseOpenAI) contextTokensForModel(model string) int64 {
 	return 0
 }
 
-func (b *baseOpenAI) emitReasoningFromResponse(resp *responses.Response, out chan<- Msg) {
-	if resp == nil {
-		return
-	}
-	for _, item := range resp.Output {
-		if item.Type != "reasoning" {
-			continue
-		}
-		reasoning := item.AsReasoning()
-		for _, summary := range reasoning.Summary {
-			if summary.Text == "" {
-				continue
-			}
-			out <- Msg{Type: MsgTypeReasoningSummary, Value: summary.Text}
-		}
-	}
-}
-
-func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
+func (b *OpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 	if resp == nil || !resp.JSON.Usage.Valid() {
 		return nil
 	}
@@ -337,7 +291,7 @@ func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 	}
 }
 
-func (b *baseOpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) {
+func (b *OpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) {
 	if b.maxContextTokens <= 0 {
 		return
 	}
@@ -346,22 +300,15 @@ func (b *baseOpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) 
 	}
 }
 
-// === Streaming OpenAI ===
-
-// StreamingOpenAI uses the Responses streaming API.
-type StreamingOpenAI struct {
-	*baseOpenAI
-}
-
-func NewStreamingOpenAI(ctx context.Context, model string, params OpenAIParams, toolSet []tools.Tool) (*StreamingOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model, params, toolSet)
+func NewOpenAI(model string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
+	provider, err := newOpenAI(model, params, toolSet)
 	if err != nil {
 		return nil, err
 	}
-	return &StreamingOpenAI{baseOpenAI: base}, nil
+	return provider, nil
 }
 
-func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
+func (s *OpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	out := make(chan Msg)
 
 	go func() {
@@ -393,7 +340,7 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 	return out
 }
 
-func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
+func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
 	stream := s.client.NewStreamingResponse(ctx, params)
 	var completed *responses.Response
 	for stream.Next() {
@@ -415,58 +362,4 @@ func (s *StreamingOpenAI) streamResponse(ctx context.Context, params responses.R
 		return completed, err
 	}
 	return completed, nil
-}
-
-// === Direct OpenAI ===
-
-// DirectOpenAI uses the non-streaming Responses API.
-type DirectOpenAI struct {
-	*baseOpenAI
-}
-
-func NewDirectOpenAI(ctx context.Context, model string, params OpenAIParams, toolSet []tools.Tool) (*DirectOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model, params, toolSet)
-	if err != nil {
-		return nil, err
-	}
-	return &DirectOpenAI{baseOpenAI: base}, nil
-}
-
-func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
-	out := make(chan Msg, 1)
-
-	go func() {
-		defer close(out)
-
-		params := d.buildParams(input, d.state.get())
-		for {
-			resp, err := d.client.NewResponse(ctx, params)
-			if err != nil {
-				out <- Msg{Type: MsgTypeError, Value: err.Error()}
-				return
-			}
-			if resp.ID != "" {
-				d.state.set(resp.ID)
-			}
-
-			toolOutputs, err := d.toolOutputsFromResponse(ctx, resp, out)
-			if err != nil {
-				out <- Msg{Type: MsgTypeError, Value: err.Error()}
-				return
-			}
-			d.emitReasoningFromResponse(resp, out)
-			if len(toolOutputs) == 0 {
-				output := strings.TrimSpace(resp.OutputText())
-				if output != "" {
-					out <- Msg{Type: MsgTypeChat, Value: output}
-				}
-				d.emitContextUsage(resp, out)
-				return
-			}
-			d.emitContextUsage(resp, out)
-			params = d.buildToolParams(resp.ID, toolOutputs)
-		}
-	}()
-
-	return out
 }

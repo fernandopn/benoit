@@ -65,7 +65,7 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 
 	toolA := &blockingTool{name: "tool_a", startCh: startCh, release: releaseA, output: "out-a"}
 	toolB := &blockingTool{name: "tool_b", startCh: startCh, release: releaseB, output: "out-b"}
-	base := &baseOpenAI{
+	base := &OpenAI{
 		toolMap:    map[string]tools.Tool{"tool_a": toolA, "tool_b": toolB},
 		toolRunner: parallelToolRunner{},
 	}
@@ -158,7 +158,7 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 }
 
 func TestToolOutputsFromResponseErrors(t *testing.T) {
-	base := &baseOpenAI{toolMap: map[string]tools.Tool{}}
+	base := &OpenAI{toolMap: map[string]tools.Tool{}}
 	resp := &responses.Response{Output: []responses.ResponseOutputItemUnion{
 		functionCallItem(t, "missing_tool", "call-1", map[string]any{}),
 	}}
@@ -224,16 +224,6 @@ func TestParseToolArgs(t *testing.T) {
 	_, err = parseToolArgs("not-json")
 	if err == nil {
 		t.Fatal("expected error for invalid json")
-	}
-}
-
-func TestModelInList(t *testing.T) {
-	models := []string{"a", "b", "c"}
-	if !modelInList(models, "b") {
-		t.Fatal("expected model to be found")
-	}
-	if modelInList(models, "d") {
-		t.Fatal("expected model to be missing")
 	}
 }
 
