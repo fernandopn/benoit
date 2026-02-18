@@ -219,6 +219,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		headerHeight := 2
 		gapHeight := 1
+		footerHeight := 1
 
 		bodyFrameW, bodyFrameH := m.bodyStyle.GetFrameSize()
 		inputFrameW, inputFrameH := m.inputBoxStyle.GetFrameSize()
@@ -226,7 +227,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.input.SetWidth(max(10, msg.Width-inputFrameW))
 		inputHeight := m.input.Height()
 
-		viewportHeight := msg.Height - headerHeight - gapHeight*2 - inputFrameH - inputHeight - bodyFrameH
+		viewportHeight := msg.Height - headerHeight - gapHeight*2 - inputFrameH - inputHeight - bodyFrameH - footerHeight
 		m.vp.Width = max(10, msg.Width-bodyFrameW)
 		m.vp.Height = max(1, viewportHeight)
 
@@ -300,8 +301,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
-	header := m.headerStyle.Render(m.headerLine())
-	subHeader := m.subHeaderStyle.Render("Enter to send | /exit to quit | PgUp/PgDn or mouse wheel to scroll")
+	width := max(0, m.width)
+	header := m.headerStyle.Width(width).Render(m.headerLine())
+	subHeader := m.subHeaderStyle.Width(width).Render("Enter to send | /exit to quit | PgUp/PgDn or mouse wheel to scroll")
 	body := m.bodyStyle.Render(m.vp.View())
 	input := m.inputBoxStyle.Render(m.input.View())
 
@@ -313,9 +315,7 @@ func (m model) View() string {
 		"",
 		input,
 	}
-	if footer := m.footerLine(); footer != "" {
-		lines = append(lines, footer)
-	}
+	lines = append(lines, m.footerLine())
 	return strings.Join(lines, "\n")
 }
 
@@ -331,15 +331,30 @@ func (m model) headerLine() string {
 	if m.streaming {
 		rightStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("179")).Bold(true)
 	}
-	leftText := leftStyle.Render(left)
-	rightText := rightStyle.Render(right)
 
 	width := max(0, m.width-2)
-	gap := width - lipgloss.Width(leftText) - lipgloss.Width(rightText)
+	rightText := rightStyle.Render(right)
+	rightWidth := lipgloss.Width(rightText)
+	leftMax := width - rightWidth - 1
+	if leftMax < 0 {
+		leftMax = 0
+	}
+	leftRaw := left
+	if leftMax > 0 {
+		leftRaw = lipgloss.NewStyle().MaxWidth(leftMax).Render(left)
+	} else {
+		leftRaw = ""
+	}
+	leftText := leftStyle.Render(leftRaw)
+	gap := width - lipgloss.Width(leftText) - rightWidth
 	if gap < 1 {
 		gap = 1
 	}
-	return leftText + strings.Repeat(" ", gap) + rightText
+	line := leftText + strings.Repeat(" ", gap) + rightText
+	if pad := width - lipgloss.Width(line); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return line
 }
 
 func startStream(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration, seq int) tea.Cmd {
@@ -713,11 +728,11 @@ func parsePercent(value string) (float64, bool) {
 }
 
 func (m model) footerLine() string {
+	width := max(0, m.width-2)
 	if m.contextLeft == "" {
-		return ""
+		return strings.Repeat(" ", width)
 	}
 	text := m.contextLeftStyle.Render(m.contextLeft)
-	width := max(0, m.width-2)
 	pad := width - lipgloss.Width(text)
 	if pad < 0 {
 		pad = 0
