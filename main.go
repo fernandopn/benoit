@@ -23,7 +23,7 @@ func main() {
 		provider providers.Provider
 		err      error
 	)
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
 	case "streamingopenai":
 		provider, err = providers.NewStreamingOpenAI(ctx, *model)
@@ -37,6 +37,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "provider init error:", err)
 		os.Exit(1)
 	}
+	cancel()
 
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
