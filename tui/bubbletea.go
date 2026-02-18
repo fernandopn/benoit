@@ -10,6 +10,9 @@ import (
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/glamour"
+	glamouransi "github.com/charmbracelet/glamour/ansi"
+	glamourstyles "github.com/charmbracelet/glamour/styles"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/fernandopn/benoid/providers"
@@ -76,18 +79,19 @@ type model struct {
 	inputBoxStyle  lipgloss.Style
 	inputBgStyle   lipgloss.Style
 
-	userLabelStyle      lipgloss.Style
-	userTextStyle       lipgloss.Style
-	assistantLabelStyle lipgloss.Style
-	reasoningLabelStyle lipgloss.Style
-	toolLabelStyle      lipgloss.Style
-	contextLabelStyle   lipgloss.Style
-	errorLabelStyle     lipgloss.Style
+	userTextStyle     lipgloss.Style
+	toolLabelStyle    lipgloss.Style
+	contextLabelStyle lipgloss.Style
+	errorLabelStyle   lipgloss.Style
 
-	systemTextStyle    lipgloss.Style
-	reasoningTextStyle lipgloss.Style
-	contextTextStyle   lipgloss.Style
-	errorTextStyle     lipgloss.Style
+	systemTextStyle         lipgloss.Style
+	contextTextStyle        lipgloss.Style
+	errorTextStyle          lipgloss.Style
+	assistantMarkdownStyle  glamouransi.StyleConfig
+	reasoningMarkdownStyle  glamouransi.StyleConfig
+	assistantMarkdownRender *glamour.TermRenderer
+	reasoningMarkdownRender *glamour.TermRenderer
+	markdownWidth           int
 
 	contextLeft      string
 	contextLeftStyle lipgloss.Style
@@ -161,7 +165,10 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 	inputBg := lipgloss.NewStyle().
 		Background(inputBgColor)
 
-	return model{
+	assistantMarkdownStyle := assistantMarkdownStyleConfig()
+	reasoningMarkdownStyle := reasoningMarkdownStyleConfig(muted)
+
+	m := model{
 		ctx:      ctx,
 		provider: provider,
 		timeout:  timeout,
@@ -175,18 +182,9 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 		bodyStyle:      body,
 		inputBoxStyle:  inputBox,
 		inputBgStyle:   inputBg,
-		userLabelStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color(USER_FOREGROUND_COLOR)).
-			Background(inputBgColor),
 		userTextStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(USER_FOREGROUND_COLOR)).
 			Background(inputBgColor),
-		assistantLabelStyle: lipgloss.NewStyle().
-			Foreground(strong).
-			Bold(true),
-		reasoningLabelStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#8FA0B8")).
-			Bold(true),
 		toolLabelStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#9CB6FF")).
 			Bold(true),
@@ -199,9 +197,6 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 		systemTextStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#7F8DA3")).
 			Italic(true),
-		reasoningTextStyle: lipgloss.NewStyle().
-			Foreground(muted).
-			Italic(true),
 		contextTextStyle: lipgloss.NewStyle().
 			Foreground(muted),
 		errorTextStyle: lipgloss.NewStyle().
@@ -209,7 +204,11 @@ func newModel(ctx context.Context, provider providers.Provider, timeout time.Dur
 		contextLeftStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#8FB3FF")).
 			Bold(true),
+		assistantMarkdownStyle: assistantMarkdownStyle,
+		reasoningMarkdownStyle: reasoningMarkdownStyle,
 	}
+	m.updateMarkdownRenderers()
+	return m
 }
 
 func (m model) Init() tea.Cmd {
@@ -505,12 +504,9 @@ func (m model) renderBlock(b block) string {
 	case blockUser:
 		return m.renderUserBlock(b.Text)
 	case blockAssistant:
-		return strings.TrimSpace(b.Text)
+		return renderMarkdown(b.Text, m.assistantMarkdownRender)
 	case blockReasoning:
-		if strings.TrimSpace(b.Text) == "" {
-			return ""
-		}
-		return m.reasoningTextStyle.Render(b.Text)
+		return renderMarkdown(b.Text, m.reasoningMarkdownRender)
 	case blockToolCall:
 		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args")
 	case blockToolResult:
@@ -567,6 +563,110 @@ func (m model) renderUserBlock(text string) string {
 
 	out = append(out, blank)
 	return strings.Join(out, "\n")
+}
+
+func assistantMarkdownStyleConfig() glamouransi.StyleConfig {
+	return glamourstyles.DarkStyleConfig
+}
+
+func reasoningMarkdownStyleConfig(baseColor lipgloss.Color) glamouransi.StyleConfig {
+	style := glamourstyles.DarkStyleConfig
+	applyMarkdownBase(&style, string(baseColor), true)
+	return style
+}
+
+func applyMarkdownBase(style *glamouransi.StyleConfig, color string, italic bool) {
+	colorPtr := strPtr(color)
+
+	applyPrimitive(&style.Text, colorPtr, italic)
+	applyPrimitive(&style.Emph, colorPtr, italic)
+	applyPrimitive(&style.Strong, colorPtr, italic)
+	applyPrimitive(&style.Strikethrough, colorPtr, italic)
+	applyPrimitive(&style.Paragraph.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.Document.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.BlockQuote.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.List.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.Item, colorPtr, italic)
+	applyPrimitive(&style.Enumeration, colorPtr, italic)
+	applyPrimitive(&style.Task.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.Heading.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.H1.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.H2.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.H3.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.H4.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.H5.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.H6.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.Link, colorPtr, italic)
+	applyPrimitive(&style.LinkText, colorPtr, italic)
+	applyPrimitive(&style.HorizontalRule, colorPtr, italic)
+	applyPrimitive(&style.Table.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.DefinitionList.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.DefinitionTerm, colorPtr, italic)
+	applyPrimitive(&style.DefinitionDescription, colorPtr, italic)
+	applyPrimitive(&style.Image, colorPtr, italic)
+	applyPrimitive(&style.ImageText, colorPtr, italic)
+	applyPrimitive(&style.HTMLBlock.StylePrimitive, colorPtr, italic)
+	applyPrimitive(&style.HTMLSpan.StylePrimitive, colorPtr, italic)
+}
+
+func applyPrimitive(target *glamouransi.StylePrimitive, color *string, italic bool) {
+	if color != nil {
+		target.Color = color
+	}
+	if italic {
+		target.Italic = boolPtr(true)
+	}
+}
+
+func (m *model) updateMarkdownRenderers() {
+	width := m.vp.Width
+	if width <= 0 {
+		width = 80
+	}
+	if width == m.markdownWidth && m.assistantMarkdownRender != nil && m.reasoningMarkdownRender != nil {
+		return
+	}
+	m.assistantMarkdownRender = newMarkdownRenderer(width, m.assistantMarkdownStyle)
+	m.reasoningMarkdownRender = newMarkdownRenderer(width, m.reasoningMarkdownStyle)
+	m.markdownWidth = width
+}
+
+func newMarkdownRenderer(width int, style glamouransi.StyleConfig) *glamour.TermRenderer {
+	renderer, err := glamour.NewTermRenderer(
+		glamour.WithStyles(style),
+		glamour.WithWordWrap(width),
+		glamour.WithTableWrap(true),
+		glamour.WithInlineTableLinks(true),
+	)
+	if err != nil {
+		return nil
+	}
+	return renderer
+}
+
+func renderMarkdown(text string, renderer *glamour.TermRenderer) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	if renderer == nil {
+		return strings.TrimSpace(text)
+	}
+	rendered, err := renderer.Render(text)
+	if err != nil {
+		return strings.TrimSpace(text)
+	}
+	return strings.TrimRight(rendered, "\n")
+}
+
+func strPtr(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func boolPtr(value bool) *bool {
+	return &value
 }
 
 func renderToolBlock(title string, meta map[string]string, body string, bodyLabel string) string {
@@ -882,6 +982,7 @@ func (m *model) relayout(followBottom bool) {
 	viewportHeight := m.height - headerHeight - gapHeight*2 - inputAreaHeight - bodyFrameH - footerHeight
 	m.vp.Width = max(10, m.width-bodyFrameW)
 	m.vp.Height = max(1, viewportHeight)
+	m.updateMarkdownRenderers()
 
 	wasAtBottom := m.vp.AtBottom()
 	m.vp.SetContent(m.renderTranscript())
