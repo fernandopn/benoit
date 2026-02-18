@@ -322,6 +322,9 @@ func (b *baseOpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 }
 
 func (b *baseOpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) {
+	if b.maxContextTokens <= 0 {
+		return
+	}
 	if usage := b.contextUsageMsg(resp); usage != nil {
 		out <- *usage
 	}
