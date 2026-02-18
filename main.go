@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoid/tools"
 )
 
 func main() {
@@ -24,11 +25,12 @@ func main() {
 		err      error
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
+	toolSet := []tools.Tool{tools.NewClockTool()}
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
 	case "streamingopenai":
-		provider, err = providers.NewStreamingOpenAI(ctx, *model)
+		provider, err = providers.NewStreamingOpenAI(ctx, *model, toolSet)
 	case "directopenai":
-		provider, err = providers.NewDirectOpenAI(ctx, *model)
+		provider, err = providers.NewDirectOpenAI(ctx, *model, toolSet)
 	default:
 		fmt.Fprintln(os.Stderr, "unknown provider:", *providerName)
 		os.Exit(1)

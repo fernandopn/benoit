@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fernandopn/benoid/tools"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 )
@@ -16,6 +17,7 @@ type baseOpenAI struct {
 	state  *openAIState
 	model  string
 	kind   string
+	tools  []responses.ToolUnionParam
 }
 
 // StreamingOpenAI uses the Responses streaming API.
@@ -45,23 +47,23 @@ func (s *openAIState) set(id string) {
 	s.mu.Unlock()
 }
 
-func NewStreamingOpenAI(ctx context.Context, model string) (*StreamingOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model)
+func NewStreamingOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*StreamingOpenAI, error) {
+	base, err := newBaseOpenAI(ctx, "StreamingOpenAI", model, toolSet)
 	if err != nil {
 		return nil, err
 	}
 	return &StreamingOpenAI{baseOpenAI: base}, nil
 }
 
-func NewDirectOpenAI(ctx context.Context, model string) (*DirectOpenAI, error) {
-	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model)
+func NewDirectOpenAI(ctx context.Context, model string, toolSet []tools.Tool) (*DirectOpenAI, error) {
+	base, err := newBaseOpenAI(ctx, "DirectOpenAI", model, toolSet)
 	if err != nil {
 		return nil, err
 	}
 	return &DirectOpenAI{baseOpenAI: base}, nil
 }
 
-func newBaseOpenAI(ctx context.Context, kind string, model string) (*baseOpenAI, error) {
+func newBaseOpenAI(ctx context.Context, kind string, model string, toolSet []tools.Tool) (*baseOpenAI, error) {
 	if _, ok := os.LookupEnv("OPENAI_API_KEY"); !ok {
 		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
 	}
@@ -72,6 +74,15 @@ func newBaseOpenAI(ctx context.Context, kind string, model string) (*baseOpenAI,
 		return nil, err
 	}
 	base.model = resolved
+	if len(toolSet) > 0 {
+		base.tools = make([]responses.ToolUnionParam, 0, len(toolSet))
+		for _, tool := range toolSet {
+			if tool == nil {
+				continue
+			}
+			base.tools = append(base.tools, tool.Definition())
+		}
+	}
 	return base, nil
 }
 
@@ -82,6 +93,9 @@ func (b *baseOpenAI) buildParams(input string, previousID string) responses.Resp
 	}
 	if previousID != "" {
 		params.PreviousResponseID = openai.String(previousID)
+	}
+	if len(b.tools) > 0 {
+		params.Tools = b.tools
 	}
 	return params
 }
