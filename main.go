@@ -101,11 +101,11 @@ func main() {
 				fmt.Fprintln(os.Stderr, "request error:", msg.Value)
 			case providers.MsgTypeToolCall:
 				switchState(providers.MsgTypeToolCall)
-				fmt.Fprintf(writer, "name=%s args=%s", msg.Metadata["tool"], msg.Value)
+				fmt.Fprintf(writer, "name=%s args=%s call_id=%s", msg.Metadata["tool"], msg.Value, msg.Metadata["call_id"])
 				writer.Flush()
 			case providers.MsgTypeToolResult:
 				switchState(providers.MsgTypeToolResult)
-				fmt.Fprintf(writer, "name=%s output=%s", msg.Metadata["tool"], msg.Value)
+				fmt.Fprintf(writer, "name=%s output=%s call_id=%s", msg.Metadata["tool"], msg.Value, msg.Metadata["call_id"])
 				writer.Flush()
 			}
 		}
