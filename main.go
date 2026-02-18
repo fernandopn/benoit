@@ -15,9 +15,15 @@ import (
 )
 
 func main() {
+	defaultRoot, rootErr := os.Getwd()
+	if rootErr != nil {
+		fmt.Fprintln(os.Stderr, "filesystem init error:", rootErr)
+		os.Exit(1)
+	}
 	providerName := flag.String("provider", "StreamingOpenAI", "provider class (StreamingOpenAI or DirectOpenAI)")
 	model := flag.String("model", "gpt-5.2", "model name")
 	timeout := flag.Duration("timeout", 60*time.Second, "request timeout (e.g. 45s, 2m)")
+	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	flag.Parse()
 
 	var (
@@ -25,7 +31,17 @@ func main() {
 		err      error
 	)
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-	toolSet := []tools.Tool{tools.NewClockTool(), tools.NewListFilesTool(), tools.NewCurrentDirectoryTool()}
+	fs, err := tools.NewRestrictedFS(*fsRoot)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "filesystem init error:", err)
+		os.Exit(1)
+	}
+	toolSet := []tools.Tool{
+		tools.NewClockTool(),
+		tools.NewListFilesToolWithFS(fs),
+		tools.NewCurrentDirectoryToolWithFS(fs),
+		tools.NewReadFileToolWithFS(fs),
+	}
 	switch strings.ToLower(strings.TrimSpace(*providerName)) {
 	case "streamingopenai":
 		provider, err = providers.NewStreamingOpenAI(ctx, *model, toolSet)

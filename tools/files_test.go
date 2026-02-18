@@ -11,10 +11,12 @@ import (
 )
 
 type fakeFS struct {
-	entries    map[string][]os.DirEntry
-	readDirErr map[string]error
-	cwd        string
-	cwdErr     error
+	entries     map[string][]os.DirEntry
+	readDirErr  map[string]error
+	files       map[string][]byte
+	readFileErr map[string]error
+	cwd         string
+	cwdErr      error
 }
 
 func (f fakeFS) ReadDir(name string) ([]os.DirEntry, error) {
@@ -25,6 +27,16 @@ func (f fakeFS) ReadDir(name string) ([]os.DirEntry, error) {
 		return entries, nil
 	}
 	return []os.DirEntry{}, nil
+}
+
+func (f fakeFS) ReadFile(name string) ([]byte, error) {
+	if err, ok := f.readFileErr[name]; ok {
+		return nil, err
+	}
+	if data, ok := f.files[name]; ok {
+		return data, nil
+	}
+	return []byte{}, nil
 }
 
 func (f fakeFS) Getwd() (string, error) {
@@ -124,6 +136,17 @@ func TestListFilesToolValidationErrors(t *testing.T) {
 	}
 }
 
+func TestListFilesToolMissingFS(t *testing.T) {
+	tool := NewListFilesToolWithFS(nil)
+	out, err := tool.Call(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: filesystem not configured" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
 func TestListFilesToolReadDirError(t *testing.T) {
 	expected := errors.New("boom")
 	fs := fakeFS{readDirErr: map[string]error{"/root": expected}}
@@ -146,5 +169,80 @@ func TestCurrentDirectoryTool(t *testing.T) {
 	}
 	if out != "/work" {
 		t.Fatalf("expected %q, got %q", "/work", out)
+	}
+}
+
+func TestCurrentDirectoryToolMissingFS(t *testing.T) {
+	tool := NewCurrentDirectoryToolWithFS(nil)
+	out, err := tool.Call(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: filesystem not configured" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestReadFileTool(t *testing.T) {
+	fs := fakeFS{files: map[string][]byte{"/file.txt": []byte("hello")}}
+	tool := NewReadFileToolWithFS(fs)
+	out, err := tool.Call(context.Background(), map[string]any{"path": "/file.txt"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "hello" {
+		t.Fatalf("expected %q, got %q", "hello", out)
+	}
+}
+
+func TestReadFileToolValidationErrors(t *testing.T) {
+	tool := NewReadFileToolWithFS(fakeFS{})
+
+	out, err := tool.Call(context.Background(), map[string]any{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: missing required argument: path" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+
+	out, err = tool.Call(context.Background(), map[string]any{"path": 123})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: path must be a string" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+
+	out, err = tool.Call(context.Background(), map[string]any{"path": "  "})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: path cannot be empty" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestReadFileToolMissingFS(t *testing.T) {
+	tool := NewReadFileToolWithFS(nil)
+	out, err := tool.Call(context.Background(), map[string]any{"path": "/file.txt"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: filesystem not configured" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestReadFileToolReadError(t *testing.T) {
+	expected := errors.New("read fail")
+	fs := fakeFS{readFileErr: map[string]error{"/file.txt": expected}}
+	tool := NewReadFileToolWithFS(fs)
+	out, err := tool.Call(context.Background(), map[string]any{"path": "/file.txt"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: read fail" {
+		t.Fatalf("unexpected output: %q", out)
 	}
 }
