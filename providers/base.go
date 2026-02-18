@@ -7,12 +7,15 @@ type MsgType int
 const (
 	MsgTypeChat MsgType = iota
 	MsgTypeError
+	MsgTypeToolCall
+	MsgTypeToolResult
 )
 
 // Msg represents a message emitted by a provider.
 type Msg struct {
-	Type  MsgType
-	Value string
+	Type     MsgType
+	Value    string
+	Metadata map[string]string
 }
 
 // Provider abstracts the chat interaction for a model backend.

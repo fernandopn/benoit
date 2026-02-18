@@ -66,25 +66,55 @@ func main() {
 		}
 
 		ctx, cancel := context.WithTimeout(context.Background(), *timeout)
-		fmt.Fprint(writer, "Assistant> ")
-		writer.Flush()
 
-		var hadError bool
+		var (
+			hadError            bool
+			messageTypeHandling *providers.MsgType
+		)
+		switchState := func(next providers.MsgType) {
+			if messageTypeHandling != nil && *messageTypeHandling == next {
+				return
+			}
+			if messageTypeHandling != nil {
+				fmt.Fprintln(writer)
+			}
+			tt := next
+			messageTypeHandling = &tt
+			switch next {
+			case providers.MsgTypeChat:
+				fmt.Fprint(writer, "[assistant]\n")
+			case providers.MsgTypeToolCall:
+				fmt.Fprint(writer, "[tool call]\n")
+			case providers.MsgTypeToolResult:
+				fmt.Fprint(writer, "[tool response]\n")
+			}
+		}
 		msgs := provider.Chat(ctx, text)
 		for msg := range msgs {
 			switch msg.Type {
 			case providers.MsgTypeChat:
+				switchState(providers.MsgTypeChat)
 				fmt.Fprint(writer, msg.Value)
 				writer.Flush()
 			case providers.MsgTypeError:
 				hadError = true
 				fmt.Fprintln(os.Stderr, "request error:", msg.Value)
+			case providers.MsgTypeToolCall:
+				switchState(providers.MsgTypeToolCall)
+				fmt.Fprintf(writer, "name=%s args=%s", msg.Metadata["tool"], msg.Value)
+				writer.Flush()
+			case providers.MsgTypeToolResult:
+				switchState(providers.MsgTypeToolResult)
+				fmt.Fprintf(writer, "name=%s output=%s", msg.Metadata["tool"], msg.Value)
+				writer.Flush()
 			}
 		}
 		cancel()
 
-		fmt.Fprintln(writer)
-		writer.Flush()
+		if messageTypeHandling != nil {
+			fmt.Fprintln(writer)
+			writer.Flush()
+		}
 
 		if hadError && err == io.EOF {
 			return

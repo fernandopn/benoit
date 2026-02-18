@@ -163,7 +163,7 @@ func (b *baseOpenAI) Name() string {
 	return fmt.Sprintf("%s %s", b.kind, b.model)
 }
 
-func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response) (responses.ResponseInputParam, error) {
+func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {
 	if resp == nil || len(resp.Output) == 0 {
 		return nil, nil
 	}
@@ -190,9 +190,25 @@ func (b *baseOpenAI) toolOutputsFromResponse(ctx context.Context, resp *response
 		if err != nil {
 			return nil, fmt.Errorf("invalid arguments for %s: %w", call.Name, err)
 		}
+		out <- Msg{
+			Type:  MsgTypeToolCall,
+			Value: call.Arguments,
+			Metadata: map[string]string{
+				"tool":    call.Name,
+				"call_id": call.CallID,
+			},
+		}
 		result, err := tool.Call(ctx, args)
 		if err != nil {
 			return nil, err
+		}
+		out <- Msg{
+			Type:  MsgTypeToolResult,
+			Value: result,
+			Metadata: map[string]string{
+				"tool":    call.Name,
+				"call_id": call.CallID,
+			},
 		}
 		outputs = append(outputs, responses.ResponseInputItemParamOfFunctionCallOutput(call.CallID, result))
 	}
@@ -238,7 +254,7 @@ func (s *StreamingOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 		if response == nil {
 			return
 		}
-		toolOutputs, err := s.toolOutputsFromResponse(ctx, response)
+		toolOutputs, err := s.toolOutputsFromResponse(ctx, response, out)
 		if err != nil {
 			out <- Msg{Type: MsgTypeError, Value: err.Error()}
 			return
@@ -273,7 +289,7 @@ func (d *DirectOpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 			d.state.set(resp.ID)
 		}
 
-		toolOutputs, err := d.toolOutputsFromResponse(ctx, resp)
+		toolOutputs, err := d.toolOutputsFromResponse(ctx, resp, out)
 		if err != nil {
 			out <- Msg{Type: MsgTypeError, Value: err.Error()}
 			return
