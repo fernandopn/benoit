@@ -116,6 +116,39 @@ func runInteractiveChat(ctx context.Context, channel channels.Channel, incoming 
 	go readInputEvents(reader, inputEvents)
 
 	chat := newChatState()
+	typingRecipient := int64(0)
+	stopTypingIfNeeded := func() {
+		if typingRecipient == 0 {
+			return
+		}
+		recipient := typingRecipient
+		typingRecipient = 0
+		if err := sendTypingEvent(ctx, channel, recipient, false); err != nil {
+			debugLine(writer, colors, verbose, "stop typing failed recipient=%d err=%v", recipient, err)
+			return
+		}
+		debugLine(writer, colors, verbose, "stop typing recipient=%d", recipient)
+	}
+	startTypingIfNeeded := func() {
+		if len(chat.input) == 0 {
+			return
+		}
+		if typingRecipient != 0 {
+			return
+		}
+		recipient := chat.currentRecipient()
+		if recipient == 0 {
+			return
+		}
+		if err := sendTypingEvent(ctx, channel, recipient, true); err != nil {
+			debugLine(writer, colors, verbose, "start typing failed recipient=%d err=%v", recipient, err)
+			return
+		}
+		typingRecipient = recipient
+		debugLine(writer, colors, verbose, "start typing recipient=%d", recipient)
+	}
+	defer stopTypingIfNeeded()
+
 	writeChannelHeader(writer, colors, width)
 	printLine(writer, colors, "Waiting for incoming messages to discover recipients...", colors.dim, colors.fgMuted)
 	debugLine(writer, colors, verbose, "verbose mode enabled")
@@ -188,15 +221,21 @@ func runInteractiveChat(ctx context.Context, channel channels.Channel, incoming 
 					debugLine(writer, colors, verbose, "tab pressed with no recipients")
 				} else {
 					debugLine(writer, colors, verbose, "tab switched to recipient=%d display=%q", chat.currentRecipient(), chat.recipientDisplay(chat.currentRecipient()))
+					startTypingIfNeeded()
 				}
 				renderPrompt(writer, colors, chat)
 			case inputEventBackspace:
 				chat.backspace()
 				renderPrompt(writer, colors, chat)
 			case inputEventRune:
+				wasEmptyInput := len(chat.input) == 0
 				chat.appendRune(event.r)
+				if wasEmptyInput {
+					startTypingIfNeeded()
+				}
 				renderPrompt(writer, colors, chat)
 			case inputEventEnter:
+				stopTypingIfNeeded()
 				line := chat.takeInputLine()
 				if line == "" {
 					renderPrompt(writer, colors, chat)
@@ -236,6 +275,13 @@ func debugLine(writer *bufio.Writer, colors simpleTheme, enabled bool, format st
 		return
 	}
 	printLine(writer, colors, "[debug] "+fmt.Sprintf(format, args...), colors.dim, colors.fgMuted)
+}
+
+func sendTypingEvent(ctx context.Context, channel channels.Channel, userID int64, typing bool) error {
+	if userID == 0 {
+		return nil
+	}
+	return channel.SendMessage(ctx, channels.ChannelMessage{UserID: userID, Type: channels.TypingEvent, Typing: typing})
 }
 
 func readInputEvents(reader *bufio.Reader, out chan<- inputEvent) {
