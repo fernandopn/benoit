@@ -2,7 +2,10 @@ package tools
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
+	"fmt"
+	"mime"
 	"net/http"
 	"net/url"
 	"strings"
@@ -39,7 +42,7 @@ func (m *MatonGmailTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        m.Name(),
-			Description: openai.String("Gmail via Maton. Actions: list/get messages, send/modify/trash messages, list/get threads, list labels, create/send drafts, get profile, and connection management."),
+			Description: openai.String("Gmail via Maton. Actions: list/get messages, send/modify/trash messages, list/get threads, list labels, create/send drafts, get profile, and connection management. For send_message, prefer message.raw as base64url RFC822 with no whitespace. Convenience mode is also supported with message.to/message.subject/message.body (plus optional cc/bcc/content_type), and the tool will generate message.raw."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -87,7 +90,7 @@ func (m *MatonGmailTool) Definition() responses.ToolUnionParam {
 					},
 					"message": map[string]any{
 						"type":                 "object",
-						"description":          "Message payload (for send_message)",
+						"description":          "Message payload for send_message. Preferred: {raw: base64url RFC822 string, no whitespace}. Convenience also supported: {to, subject, body/text/html, cc?, bcc?, content_type?}; tool builds raw.",
 						"additionalProperties": true,
 					},
 					"modify": map[string]any{
@@ -157,11 +160,21 @@ func (m *MatonGmailTool) Call(ctx context.Context, args map[string]any) (string,
 		}
 		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("messages", url.PathEscape(messageID)), query, nil, connectionID)
 	case "send_message":
-		messageBody, argErr := requireObjectArg(args, "message")
+		messageBody, ok, argErr := optionalObjectArg(args, "message")
 		if argErr != nil {
 			return toolError(argErr), nil
 		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", "send"), query, messageBody, connectionID)
+		if !ok {
+			messageBody = collectTopLevelMessageFields(args)
+			if len(messageBody) == 0 {
+				return toolError(fmt.Errorf("missing required argument: message")), nil
+			}
+		}
+		sendBody, argErr := normalizeSendMessageBody(messageBody)
+		if argErr != nil {
+			return toolError(argErr), nil
+		}
+		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", "send"), query, sendBody, connectionID)
 	case "list_labels":
 		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("labels"), query, nil, connectionID)
 	case "list_threads":
@@ -269,4 +282,197 @@ func (m *MatonGmailTool) gmailPath(parts ...string) string {
 
 func fmtUnsupportedGmailAction(action string) error {
 	return errors.New("unsupported gmail action: " + action)
+}
+
+func normalizeSendMessageBody(message map[string]any) (map[string]any, error) {
+	if len(message) == 0 {
+		return nil, fmt.Errorf("message cannot be empty")
+	}
+
+	raw, hasRaw, err := optionalStringArg(message, "raw")
+	if err != nil {
+		return nil, err
+	}
+	if hasRaw {
+		normalizedRaw, err := normalizeBase64URL(raw)
+		if err != nil {
+			return nil, fmt.Errorf("message.raw must be base64url-encoded RFC822 with no whitespace: %w", err)
+		}
+		payload := cloneObject(message)
+		deleteStructuredMessageFields(payload)
+		payload["raw"] = normalizedRaw
+		return payload, nil
+	}
+
+	return buildRawMessageFromStructuredFields(message)
+}
+
+func buildRawMessageFromStructuredFields(message map[string]any) (map[string]any, error) {
+	to, ok, err := optionalStringArg(message, "to")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, fmt.Errorf("send_message requires message.raw or message.to with message.body")
+	}
+
+	subject, _, err := optionalStringArg(message, "subject")
+	if err != nil {
+		return nil, err
+	}
+	cc, _, err := optionalStringArg(message, "cc")
+	if err != nil {
+		return nil, err
+	}
+	bcc, _, err := optionalStringArg(message, "bcc")
+	if err != nil {
+		return nil, err
+	}
+
+	contentType, hasContentType, err := optionalStringArg(message, "content_type")
+	if err != nil {
+		return nil, err
+	}
+
+	body, hasBody, err := optionalStringArg(message, "body")
+	if err != nil {
+		return nil, err
+	}
+	if !hasBody {
+		body, hasBody, err = optionalStringArg(message, "text")
+		if err != nil {
+			return nil, err
+		}
+	}
+	usedHTML := false
+	if !hasBody {
+		body, hasBody, err = optionalStringArg(message, "html")
+		if err != nil {
+			return nil, err
+		}
+		usedHTML = hasBody
+	}
+	if !hasBody {
+		return nil, fmt.Errorf("message.body (or message.text/message.html) is required when message.raw is not provided")
+	}
+
+	if !hasContentType {
+		if usedHTML {
+			contentType = "text/html; charset=utf-8"
+		} else {
+			contentType = "text/plain; charset=utf-8"
+		}
+	}
+
+	rfc822 := buildRFC822Message(to, cc, bcc, subject, contentType, body)
+	raw := base64.RawURLEncoding.EncodeToString([]byte(rfc822))
+
+	payload := cloneObject(message)
+	deleteStructuredMessageFields(payload)
+	payload["raw"] = raw
+	return payload, nil
+}
+
+func collectTopLevelMessageFields(args map[string]any) map[string]any {
+	if len(args) == 0 {
+		return nil
+	}
+	keys := []string{"raw", "to", "subject", "body", "text", "html", "content_type", "cc", "bcc", "threadId", "labelIds"}
+	message := map[string]any{}
+	for _, key := range keys {
+		if value, ok := args[key]; ok {
+			message[key] = value
+		}
+	}
+	if len(message) == 0 {
+		return nil
+	}
+	return message
+}
+
+func deleteStructuredMessageFields(payload map[string]any) {
+	delete(payload, "to")
+	delete(payload, "subject")
+	delete(payload, "cc")
+	delete(payload, "bcc")
+	delete(payload, "body")
+	delete(payload, "text")
+	delete(payload, "html")
+	delete(payload, "content_type")
+}
+
+func normalizeBase64URL(raw string) (string, error) {
+	clean := strings.Join(strings.Fields(raw), "")
+	if clean == "" {
+		return "", fmt.Errorf("value is empty")
+	}
+
+	decoded, err := decodeAnyBase64(clean)
+	if err != nil {
+		return "", err
+	}
+	if len(decoded) == 0 {
+		return "", fmt.Errorf("decoded value is empty")
+	}
+	return base64.RawURLEncoding.EncodeToString(decoded), nil
+}
+
+func decodeAnyBase64(value string) ([]byte, error) {
+	if decoded, err := base64.RawURLEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	if decoded, err := base64.URLEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	if decoded, err := base64.RawStdEncoding.DecodeString(value); err == nil {
+		return decoded, nil
+	}
+	decoded, err := base64.StdEncoding.DecodeString(value)
+	if err != nil {
+		return nil, err
+	}
+	return decoded, nil
+}
+
+func buildRFC822Message(to, cc, bcc, subject, contentType, body string) string {
+	headers := []string{
+		"MIME-Version: 1.0",
+		"To: " + to,
+	}
+	if cc != "" {
+		headers = append(headers, "Cc: "+cc)
+	}
+	if bcc != "" {
+		headers = append(headers, "Bcc: "+bcc)
+	}
+	if subject != "" {
+		headers = append(headers, "Subject: "+encodeHeaderValue(subject))
+	}
+	headers = append(headers, "Content-Type: "+contentType)
+	headers = append(headers, "Content-Transfer-Encoding: 8bit")
+
+	return strings.Join(headers, "\r\n") + "\r\n\r\n" + normalizeCRLF(body)
+}
+
+func encodeHeaderValue(value string) string {
+	for _, r := range value {
+		if r > 127 {
+			return mime.BEncoding.Encode("utf-8", value)
+		}
+	}
+	return value
+}
+
+func normalizeCRLF(value string) string {
+	value = strings.ReplaceAll(value, "\r\n", "\n")
+	value = strings.ReplaceAll(value, "\r", "\n")
+	return strings.ReplaceAll(value, "\n", "\r\n")
+}
+
+func cloneObject(value map[string]any) map[string]any {
+	clone := make(map[string]any, len(value))
+	for k, v := range value {
+		clone[k] = v
+	}
+	return clone
 }

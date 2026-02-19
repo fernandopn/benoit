@@ -18,7 +18,7 @@ func (t *OpenAICodeInterpreterTool) Name() string {
 }
 
 func (t *OpenAICodeInterpreterTool) Definition() responses.ToolUnionParam {
-	return responses.ToolParamOfCodeInterpreter("auto")
+	return responses.ToolParamOfCodeInterpreter(responses.ToolCodeInterpreterContainerCodeInterpreterContainerAutoParam{})
 }
 
 func (t *OpenAICodeInterpreterTool) Call(ctx context.Context, args map[string]any) (string, error) {
