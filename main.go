@@ -26,7 +26,7 @@ func main() {
 		os.Exit(1)
 	}
 	model := flag.String("model", "gpt-5.2", "model name")
-	timeout := flag.Duration("timeout", 60*time.Second, "request timeout (e.g. 45s, 2m)")
+	timeout := flag.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	dbPath := flag.String("db-path", "", "sqlite db path for chat logging")
 	tuiMode := flag.String("tui", defaultTUIMode, "tui mode: simple or bubbletea")

@@ -18,7 +18,7 @@ official Go SDK.
 - `-model`
   - default: `gpt-5.2`
 - `-timeout` request timeout (for example: `45s`, `2m`)
-  - default: `60s`
+  - default: `20m`
 - `-fs-root`
   - filesystem root passed to filesystem-backed tools
   - default: current working directory
