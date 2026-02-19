@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 )
 
 const TelegramAPIBaseURL = "https://api.telegram.org"
@@ -18,7 +19,12 @@ type Telegram struct {
 	botToken   string
 	apiBaseURL string
 	httpClient *http.Client
+
+	receiveMu    sync.RWMutex
+	receiveChans []chan<- ChannelMessage
 }
+
+var _ Channel = (*Telegram)(nil)
 
 type TelegramUser struct {
 	ID           int64  `json:"id"`
@@ -122,23 +128,97 @@ func (e *TelegramAPIError) Error() string {
 	return msg
 }
 
-func (t *Telegram) SendMessage(ctx context.Context, chatID int64, text string) (*TelegramMessage, error) {
+func (t *Telegram) SendMessage(ctx context.Context, message ChannelMessage) error {
 	if t == nil {
-		return nil, errors.New("telegram client is required")
+		return errors.New("telegram client is required")
 	}
-	if chatID == 0 {
-		return nil, errors.New("chat ID is required")
-	}
-	if strings.TrimSpace(text) == "" {
-		return nil, errors.New("message text is required")
+	if message.UserID == 0 {
+		return errors.New("user ID is required")
 	}
 
-	req := sendMessageRequest{ChatID: chatID, Text: text}
-	var message TelegramMessage
-	if err := t.do(ctx, "sendMessage", req, &message); err != nil {
-		return nil, err
+	switch message.Type {
+	case TextMessage:
+		if strings.TrimSpace(message.Text) == "" {
+			return errors.New("message text is required")
+		}
+		return t.sendTextMessage(ctx, message.UserID, message.Text)
+	case TypingEvent:
+		return t.sendTypingEvent(ctx, message.UserID, message.Typing)
+	default:
+		return errors.New("message type is required")
 	}
-	return &message, nil
+}
+
+func (t *Telegram) RegisterReceiveMessageChan(receive chan<- ChannelMessage) error {
+	if t == nil {
+		return errors.New("telegram client is required")
+	}
+	if receive == nil {
+		return errors.New("receive channel is required")
+	}
+	t.receiveMu.Lock()
+	t.receiveChans = append(t.receiveChans, receive)
+	t.receiveMu.Unlock()
+	return nil
+}
+
+func (t *Telegram) Listen(ctx context.Context, timeoutSeconds int) error {
+	if t == nil {
+		return errors.New("telegram client is required")
+	}
+	if timeoutSeconds < 0 {
+		return errors.New("timeout seconds cannot be negative")
+	}
+
+	offset := int64(0)
+	for {
+		updates, err := t.ReceiveMessages(ctx, offset, timeoutSeconds)
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return ctxErr
+			}
+			return err
+		}
+
+		for _, update := range updates {
+			nextOffset := update.ID + 1
+			if nextOffset > offset {
+				offset = nextOffset
+			}
+
+			incoming := incomingTelegramMessage(update)
+			channelMessage, ok := toChannelMessage(incoming)
+			if !ok {
+				continue
+			}
+			if err := t.broadcast(ctx, channelMessage); err != nil {
+				return err
+			}
+		}
+	}
+}
+
+func (t *Telegram) broadcast(ctx context.Context, message ChannelMessage) error {
+	receiveChans := t.snapshotReceiveChans()
+	for _, receive := range receiveChans {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case receive <- message:
+		}
+	}
+	return nil
+}
+
+func (t *Telegram) snapshotReceiveChans() []chan<- ChannelMessage {
+	t.receiveMu.RLock()
+	defer t.receiveMu.RUnlock()
+	if len(t.receiveChans) == 0 {
+		return nil
+	}
+	receiveChans := make([]chan<- ChannelMessage, len(t.receiveChans))
+	copy(receiveChans, t.receiveChans)
+	return receiveChans
 }
 
 func (t *Telegram) ReceiveMessages(ctx context.Context, offset int64, timeoutSeconds int) ([]TelegramUpdate, error) {
@@ -158,18 +238,72 @@ func (t *Telegram) ReceiveMessages(ctx context.Context, offset int64, timeoutSec
 }
 
 func (t *Telegram) SendTyping(ctx context.Context, chatID int64) error {
+	return t.sendTypingEvent(ctx, chatID, true)
+}
+
+func (t *Telegram) sendTextMessage(ctx context.Context, userID int64, text string) error {
+	req := sendMessageRequest{ChatID: userID, Text: text}
+	var response TelegramMessage
+	if err := t.do(ctx, "sendMessage", req, &response); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (t *Telegram) sendTypingEvent(ctx context.Context, userID int64, typing bool) error {
 	if t == nil {
 		return errors.New("telegram client is required")
 	}
-	if chatID == 0 {
-		return errors.New("chat ID is required")
+	if userID == 0 {
+		return errors.New("user ID is required")
+	}
+	if !typing {
+		return nil
 	}
 
-	req := sendChatActionRequest{ChatID: chatID, Action: "typing"}
+	req := sendChatActionRequest{ChatID: userID, Action: "typing"}
 	if err := t.do(ctx, "sendChatAction", req, nil); err != nil {
 		return err
 	}
 	return nil
+}
+
+func incomingTelegramMessage(update TelegramUpdate) *TelegramMessage {
+	if update.Message != nil {
+		return update.Message
+	}
+	if update.EditedMessage != nil {
+		return update.EditedMessage
+	}
+	if update.ChannelPost != nil {
+		return update.ChannelPost
+	}
+	return nil
+}
+
+func toChannelMessage(message *TelegramMessage) (ChannelMessage, bool) {
+	if message == nil {
+		return ChannelMessage{}, false
+	}
+	if message.From != nil && message.From.IsBot {
+		return ChannelMessage{}, false
+	}
+	if strings.TrimSpace(message.Text) == "" {
+		return ChannelMessage{}, false
+	}
+
+	userID := int64(0)
+	if message.From != nil {
+		userID = message.From.ID
+	}
+	if userID == 0 {
+		userID = message.Chat.ID
+	}
+	if userID == 0 {
+		return ChannelMessage{}, false
+	}
+
+	return ChannelMessage{Text: message.Text, UserID: userID, Type: TextMessage}, true
 }
 
 func (t *Telegram) do(ctx context.Context, method string, request any, result any) error {

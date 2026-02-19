@@ -4,13 +4,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fernandopn/benoit/internal/app"
+	"github.com/fernandopn/benoit/tools"
 )
 
 func TestLoadCredentials(t *testing.T) {
 	t.Run("openai required", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "")
-		_, err := loadCredentials(app.ModeSimple)
+		_, err := loadCredentials(ModeSimple)
 		if err == nil {
 			t.Fatal("expected missing OPENAI_API_KEY error")
 		}
@@ -22,7 +22,7 @@ func TestLoadCredentials(t *testing.T) {
 	t.Run("telegram required in telegram mode", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
-		_, err := loadCredentials(app.ModeTelegram)
+		_, err := loadCredentials(ModeTelegram)
 		if err == nil {
 			t.Fatal("expected missing TELEGRAM_API_KEY error")
 		}
@@ -35,7 +35,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
 		t.Setenv(matonAPIKeyEnv, "")
-		creds, err := loadCredentials(app.ModeSimple)
+		creds, err := loadCredentials(ModeSimple)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "  openai-key  ")
 		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
 		t.Setenv(matonAPIKeyEnv, "  maton-key  ")
-		creds, err := loadCredentials(app.ModeTelegram)
+		creds, err := loadCredentials(ModeTelegram)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -74,14 +74,14 @@ func TestParseTUIMode(t *testing.T) {
 	tests := []struct {
 		name    string
 		raw     string
-		want    app.Mode
+		want    Mode
 		wantErr bool
 	}{
-		{name: "simple", raw: "simple", want: app.ModeSimple},
-		{name: "bubbletea", raw: "bubbletea", want: app.ModeBubbleTea},
-		{name: "telegram", raw: "telegram", want: app.ModeTelegram},
-		{name: "trimmed", raw: " bubbletea ", want: app.ModeBubbleTea},
-		{name: "case insensitive", raw: "SiMpLe", want: app.ModeSimple},
+		{name: "simple", raw: "simple", want: ModeSimple},
+		{name: "bubbletea", raw: "bubbletea", want: ModeBubbleTea},
+		{name: "telegram", raw: "telegram", want: ModeTelegram},
+		{name: "trimmed", raw: " bubbletea ", want: ModeBubbleTea},
+		{name: "case insensitive", raw: "SiMpLe", want: ModeSimple},
 		{name: "invalid", raw: "nope", wantErr: true},
 	}
 
@@ -131,4 +131,48 @@ func TestParseTelegramAllowedUsers(t *testing.T) {
 			t.Fatal("expected parse error")
 		}
 	})
+}
+
+func TestSelectedTools(t *testing.T) {
+	t.Run("without maton", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with maton", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Credentials: CredentialConfig{MatonAPIKey: "test-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "maton_gcalendar", "maton_gmail"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+}
+
+func toolNames(toolSet []tools.Tool) []string {
+	names := make([]string, 0, len(toolSet))
+	for _, tool := range toolSet {
+		names = append(names, tool.Name())
+	}
+	return names
 }

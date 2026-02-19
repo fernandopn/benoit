@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestNewTelegramValidation(t *testing.T) {
@@ -81,21 +82,12 @@ func TestSendMessage(t *testing.T) {
 		t.Fatalf("new telegram client: %v", err)
 	}
 
-	message, err := client.SendMessage(context.Background(), 99, "hello")
+	err = client.SendMessage(context.Background(), ChannelMessage{Text: "hello", UserID: 99, Type: TextMessage})
 	if err != nil {
 		t.Fatalf("send message: %v", err)
 	}
 	if !called {
 		t.Fatal("expected sendMessage request to be called")
-	}
-	if message.ID != 123 {
-		t.Fatalf("unexpected message ID: %d", message.ID)
-	}
-	if message.Chat.ID != 99 {
-		t.Fatalf("unexpected chat ID in response: %d", message.Chat.ID)
-	}
-	if message.Text != "hello" {
-		t.Fatalf("unexpected message text in response: %q", message.Text)
 	}
 }
 
@@ -185,7 +177,7 @@ func TestTelegramAPIErrors(t *testing.T) {
 		t.Fatalf("new telegram client: %v", err)
 	}
 
-	_, err = client.SendMessage(context.Background(), 99, "hello")
+	err = client.SendMessage(context.Background(), ChannelMessage{Text: "hello", UserID: 99, Type: TextMessage})
 	if err == nil {
 		t.Fatal("expected API error")
 	}
@@ -247,5 +239,102 @@ func TestSendTyping(t *testing.T) {
 
 	if err := client.SendTyping(context.Background(), 0); err == nil {
 		t.Fatal("expected missing chat ID error")
+	}
+}
+
+func TestListenBroadcastsToMultipleReceiveChannels(t *testing.T) {
+	var updateCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/botbot-token/getUpdates" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		updateCalls++
+		if updateCalls == 1 {
+			response := map[string]any{
+				"ok": true,
+				"result": []map[string]any{
+					{
+						"update_id": 1001,
+						"message": map[string]any{
+							"message_id": 77,
+							"text":       "ping",
+							"chat": map[string]any{
+								"id":   42,
+								"type": "private",
+							},
+							"from": map[string]any{
+								"id":     77,
+								"is_bot": false,
+							},
+						},
+					},
+				},
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				t.Fatalf("encode response: %v", err)
+			}
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{}}); err != nil {
+			t.Fatalf("encode empty response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewTelegramWithBaseURL("bot-token", server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("new telegram client: %v", err)
+	}
+
+	first := make(chan ChannelMessage, 1)
+	second := make(chan ChannelMessage, 1)
+	if err := client.RegisterReceiveMessageChan(first); err != nil {
+		t.Fatalf("register first channel: %v", err)
+	}
+	if err := client.RegisterReceiveMessageChan(second); err != nil {
+		t.Fatalf("register second channel: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.Listen(ctx, 0)
+	}()
+
+	waitForMessage := func(name string, receive <-chan ChannelMessage) ChannelMessage {
+		t.Helper()
+		select {
+		case message := <-receive:
+			return message
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s message", name)
+			return ChannelMessage{}
+		}
+	}
+
+	firstMessage := waitForMessage("first", first)
+	secondMessage := waitForMessage("second", second)
+	for _, message := range []ChannelMessage{firstMessage, secondMessage} {
+		if message.Type != TextMessage {
+			t.Fatalf("unexpected message type: %d", message.Type)
+		}
+		if message.Text != "ping" {
+			t.Fatalf("unexpected message text: %q", message.Text)
+		}
+		if message.UserID != 77 {
+			t.Fatalf("unexpected message user id: %d", message.UserID)
+		}
+	}
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for listen to stop")
 	}
 }

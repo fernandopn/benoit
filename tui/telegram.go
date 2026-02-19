@@ -18,8 +18,8 @@ const telegramMaxMessageLength = 4096
 const telegramTypingInterval = 4 * time.Second
 const telegramTypingRequestTimeout = 4 * time.Second
 
-func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provider providers.Provider, timeout time.Duration, pollTimeoutSeconds int, allowedUserIDs []int64) error {
-	if telegramClient == nil {
+func RunTelegram(ctx context.Context, telegramChannel channels.Channel, provider providers.Provider, timeout time.Duration, pollTimeoutSeconds int, allowedUserIDs []int64) error {
+	if telegramChannel == nil {
 		return errors.New("telegram client is required")
 	}
 	if provider == nil {
@@ -35,35 +35,41 @@ func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provide
 	writeTelegramHeader(writer, colors, provider.Name(), width)
 	writer.Flush()
 	allowedUsers := buildAllowedTelegramUsers(allowedUserIDs)
+	incomingMessages := make(chan channels.ChannelMessage)
+	if err := telegramChannel.RegisterReceiveMessageChan(incomingMessages); err != nil {
+		return err
+	}
+	receiveCtx, stopReceiving := context.WithCancel(ctx)
+	defer stopReceiving()
 
-	offset := int64(0)
+	receiveErr := make(chan error, 1)
+	go func() {
+		receiveErr <- telegramChannel.Listen(receiveCtx, pollTimeoutSeconds)
+	}()
+
 	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-
-		updates, err := telegramClient.ReceiveMessages(ctx, offset, pollTimeoutSeconds)
-		if err != nil {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-receiveErr:
+			if err == nil {
+				return errors.New("telegram receiver stopped")
+			}
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
 			return err
-		}
-
-		for _, update := range updates {
-			nextOffset := update.ID + 1
-			if nextOffset > offset {
-				offset = nextOffset
+		case incoming, ok := <-incomingMessages:
+			if !ok {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return ctxErr
+				}
+				return errors.New("telegram receiver channel closed")
 			}
-
-			incoming := incomingTelegramMessage(update)
-			if incoming == nil {
+			if incoming.Type != channels.TextMessage {
 				continue
 			}
-			if incoming.From != nil && incoming.From.IsBot {
-				continue
-			}
-			if !isTelegramUserAllowed(incoming, allowedUsers) {
+			if !isTelegramUserAllowed(incoming.UserID, allowedUsers) {
 				continue
 			}
 			prompt := strings.TrimSpace(incoming.Text)
@@ -73,26 +79,29 @@ func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provide
 
 			writeTelegramIncoming(writer, colors, incoming)
 			writer.Flush()
-			if err := sendTelegramTypingSignal(ctx, telegramClient, incoming.Chat.ID); err != nil && ctx.Err() == nil {
+			if err := sendTelegramTypingSignal(ctx, telegramChannel, incoming.UserID, true); err != nil && ctx.Err() == nil {
 				fmt.Fprintln(os.Stderr, "telegram typing error:", err)
 			}
 
 			typingCtx, stopTyping := context.WithCancel(ctx)
 			typingDone := make(chan struct{})
 			go func() {
-				runTelegramTypingLoop(typingCtx, telegramClient, incoming.Chat.ID)
+				runTelegramTypingLoop(typingCtx, telegramChannel, incoming.UserID)
 				close(typingDone)
 			}()
 
-			sessionID := telegramSessionID(incoming)
+			sessionID := telegramSessionID(incoming.UserID)
 			reply, err := runTelegramPromptWithOutput(ctx, provider, prompt, timeout, sessionID, writer, colors, width)
 			stopTyping()
 			<-typingDone
+			if err := sendTelegramTypingSignal(ctx, telegramChannel, incoming.UserID, false); err != nil && ctx.Err() == nil {
+				fmt.Fprintln(os.Stderr, "telegram typing error:", err)
+			}
 			if err != nil {
 				reply = "request error: " + err.Error()
 			}
 
-			if err := sendTelegramReply(ctx, telegramClient, incoming.Chat.ID, reply); err != nil {
+			if err := sendTelegramReply(ctx, telegramChannel, incoming.UserID, reply); err != nil {
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return ctxErr
 				}
@@ -127,14 +136,14 @@ func buildAllowedTelegramUsers(ids []int64) map[int64]struct{} {
 	return allowed
 }
 
-func isTelegramUserAllowed(message *channels.TelegramMessage, allowed map[int64]struct{}) bool {
+func isTelegramUserAllowed(userID int64, allowed map[int64]struct{}) bool {
 	if len(allowed) == 0 {
 		return true
 	}
-	if message == nil || message.From == nil || message.From.ID == 0 {
+	if userID == 0 {
 		return false
 	}
-	_, ok := allowed[message.From.ID]
+	_, ok := allowed[userID]
 	return ok
 }
 
@@ -211,10 +220,11 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 	return reply, nil
 }
 
-func sendTelegramReply(ctx context.Context, telegramClient *channels.Telegram, chatID int64, text string) error {
+func sendTelegramReply(ctx context.Context, telegramChannel channels.Channel, userID int64, text string) error {
 	chunks := splitTelegramMessage(text, telegramMaxMessageLength)
 	for _, chunk := range chunks {
-		if _, err := telegramClient.SendMessage(ctx, chatID, chunk); err != nil {
+		err := telegramChannel.SendMessage(ctx, channels.ChannelMessage{Text: chunk, UserID: userID, Type: channels.TextMessage})
+		if err != nil {
 			return err
 		}
 	}
@@ -249,24 +259,11 @@ func splitTelegramMessage(text string, maxCharacters int) []string {
 	return chunks
 }
 
-func incomingTelegramMessage(update channels.TelegramUpdate) *channels.TelegramMessage {
-	if update.Message != nil {
-		return update.Message
-	}
-	if update.EditedMessage != nil {
-		return update.EditedMessage
-	}
-	if update.ChannelPost != nil {
-		return update.ChannelPost
-	}
-	return nil
-}
-
-func telegramSessionID(message *channels.TelegramMessage) string {
-	if message == nil || message.Chat.ID == 0 {
+func telegramSessionID(userID int64) string {
+	if userID == 0 {
 		return ""
 	}
-	return fmt.Sprintf("telegram:%d", message.Chat.ID)
+	return fmt.Sprintf("telegram:%d", userID)
 }
 
 func writeTelegramHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
@@ -279,72 +276,30 @@ func writeTelegramHeader(writer *bufio.Writer, colors simpleTheme, providerName 
 	fmt.Fprintln(writer)
 }
 
-func writeTelegramIncoming(writer *bufio.Writer, colors simpleTheme, message *channels.TelegramMessage) {
-	if writer == nil || message == nil {
+func writeTelegramIncoming(writer *bufio.Writer, colors simpleTheme, message channels.ChannelMessage) {
+	if writer == nil {
 		return
 	}
-	sender := telegramSenderLabel(message)
-	senderID := telegramSenderID(message)
 	text := strings.TrimSpace(message.Text)
 	if text == "" {
 		text = "(empty message)"
 	}
-	header := sender
-	if senderID != "" {
-		header += " (id:" + senderID + ")"
+	header := "unknown sender"
+	if message.UserID != 0 {
+		header = fmt.Sprintf("user:%d", message.UserID)
 	}
 	fmt.Fprintln(writer, colors.style(header, colors.bold, colors.fgAccent))
 	fmt.Fprintln(writer, colors.style(text, colors.fgUser))
 	fmt.Fprintln(writer)
 }
 
-func telegramSenderLabel(message *channels.TelegramMessage) string {
-	if message == nil {
-		return "unknown sender"
-	}
-	if message.From != nil {
-		fullName := strings.TrimSpace(strings.TrimSpace(message.From.FirstName) + " " + strings.TrimSpace(message.From.LastName))
-		if fullName != "" {
-			return fullName
-		}
-		if username := strings.TrimSpace(message.From.Username); username != "" {
-			return "@" + username
-		}
-		if message.From.ID != 0 {
-			return fmt.Sprintf("user:%d", message.From.ID)
-		}
-	}
-	if message.SenderChat != nil {
-		if username := strings.TrimSpace(message.SenderChat.Username); username != "" {
-			return "@" + username
-		}
-		if title := strings.TrimSpace(message.SenderChat.Title); title != "" {
-			return title
-		}
-		if message.SenderChat.ID != 0 {
-			return fmt.Sprintf("chat:%d", message.SenderChat.ID)
-		}
-	}
-	if signature := strings.TrimSpace(message.AuthorSignature); signature != "" {
-		return signature
-	}
-	return "unknown sender"
-}
-
-func telegramSenderID(message *channels.TelegramMessage) string {
-	if message == nil || message.From == nil || message.From.ID == 0 {
-		return ""
-	}
-	return fmt.Sprintf("%d", message.From.ID)
-}
-
-func runTelegramTypingLoop(ctx context.Context, telegramClient *channels.Telegram, chatID int64) {
-	if telegramClient == nil || chatID == 0 {
+func runTelegramTypingLoop(ctx context.Context, telegramChannel channels.Channel, userID int64) {
+	if telegramChannel == nil || userID == 0 {
 		return
 	}
 
 	notify := func() bool {
-		err := sendTelegramTypingSignal(ctx, telegramClient, chatID)
+		err := sendTelegramTypingSignal(ctx, telegramChannel, userID, true)
 		if err == nil {
 			return true
 		}
@@ -370,12 +325,12 @@ func runTelegramTypingLoop(ctx context.Context, telegramClient *channels.Telegra
 	}
 }
 
-func sendTelegramTypingSignal(ctx context.Context, telegramClient *channels.Telegram, chatID int64) error {
+func sendTelegramTypingSignal(ctx context.Context, telegramChannel channels.Channel, userID int64, typing bool) error {
 	actionCtx := ctx
 	cancel := func() {}
 	if telegramTypingRequestTimeout > 0 {
 		actionCtx, cancel = context.WithTimeout(ctx, telegramTypingRequestTimeout)
 	}
 	defer cancel()
-	return telegramClient.SendTyping(actionCtx, chatID)
+	return telegramChannel.SendMessage(actionCtx, channels.ChannelMessage{UserID: userID, Type: channels.TypingEvent, Typing: typing})
 }

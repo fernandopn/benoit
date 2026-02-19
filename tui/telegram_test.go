@@ -125,7 +125,7 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode sendMessage payload: %v", err)
 			}
-			if payload.ChatID != 99 {
+			if payload.ChatID != 77 {
 				t.Fatalf("unexpected chat id: %d", payload.ChatID)
 			}
 			mu.Lock()
@@ -155,7 +155,7 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
 				t.Fatalf("decode sendChatAction payload: %v", err)
 			}
-			if payload.ChatID != 99 {
+			if payload.ChatID != 77 {
 				t.Fatalf("unexpected typing chat id: %d", payload.ChatID)
 			}
 			if payload.Action != "typing" {
@@ -191,7 +191,7 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 	if provider.inputs[0] != "Who are you?" {
 		t.Fatalf("unexpected provider input: %q", provider.inputs[0])
 	}
-	if len(provider.sessions) != 1 || provider.sessions[0] != "telegram:99" {
+	if len(provider.sessions) != 1 || provider.sessions[0] != "telegram:77" {
 		t.Fatalf("unexpected provider session routing: %v", provider.sessions)
 	}
 	provider.mu.Unlock()
@@ -346,83 +346,24 @@ func TestRunTelegramPromptEmptyResponseFallback(t *testing.T) {
 	}
 }
 
-func TestTelegramSenderLabel(t *testing.T) {
-	tests := []struct {
-		name    string
-		message *channels.TelegramMessage
-		want    string
-	}{
-		{
-			name:    "user username",
-			message: &channels.TelegramMessage{From: &channels.TelegramUser{Username: "alice"}},
-			want:    "@alice",
-		},
-		{
-			name:    "user full name",
-			message: &channels.TelegramMessage{From: &channels.TelegramUser{FirstName: "Alice", LastName: "Doe"}},
-			want:    "Alice Doe",
-		},
-		{
-			name:    "user id fallback",
-			message: &channels.TelegramMessage{From: &channels.TelegramUser{ID: 77}},
-			want:    "user:77",
-		},
-		{
-			name:    "sender chat title",
-			message: &channels.TelegramMessage{SenderChat: &channels.TelegramChat{Title: "Announcements"}},
-			want:    "Announcements",
-		},
-		{
-			name:    "author signature",
-			message: &channels.TelegramMessage{AuthorSignature: "Editor"},
-			want:    "Editor",
-		},
-		{
-			name:    "unknown",
-			message: &channels.TelegramMessage{},
-			want:    "unknown sender",
-		},
+func TestTelegramSessionID(t *testing.T) {
+	if got := telegramSessionID(77); got != "telegram:77" {
+		t.Fatalf("telegramSessionID(77) = %q", got)
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := telegramSenderLabel(tc.message)
-			if got != tc.want {
-				t.Fatalf("telegramSenderLabel() = %q, want %q", got, tc.want)
-			}
-		})
+	if got := telegramSessionID(0); got != "" {
+		t.Fatalf("telegramSessionID(0) = %q", got)
 	}
 }
 
-func TestTelegramSenderID(t *testing.T) {
-	tests := []struct {
-		name    string
-		message *channels.TelegramMessage
-		want    string
-	}{
-		{
-			name:    "with user id",
-			message: &channels.TelegramMessage{From: &channels.TelegramUser{ID: 77}},
-			want:    "77",
-		},
-		{
-			name:    "no sender",
-			message: &channels.TelegramMessage{},
-			want:    "",
-		},
-		{
-			name:    "nil message",
-			message: nil,
-			want:    "",
-		},
+func TestIsTelegramUserAllowed(t *testing.T) {
+	allowed := map[int64]struct{}{77: {}}
+	if !isTelegramUserAllowed(77, allowed) {
+		t.Fatal("expected user 77 to be allowed")
 	}
-
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			got := telegramSenderID(tc.message)
-			if got != tc.want {
-				t.Fatalf("telegramSenderID() = %q, want %q", got, tc.want)
-			}
-		})
+	if isTelegramUserAllowed(999, allowed) {
+		t.Fatal("expected user 999 to be rejected")
+	}
+	if !isTelegramUserAllowed(0, nil) {
+		t.Fatal("expected allowlist to allow all users")
 	}
 }
