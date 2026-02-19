@@ -7,6 +7,9 @@ type MessageType int
 const (
 	TextMessage MessageType = iota
 	TypingEvent
+
+	ParamUsername    = "username"
+	ParamDisplayName = "display_name"
 )
 
 type ChannelMessage struct {
@@ -14,6 +17,7 @@ type ChannelMessage struct {
 	UserID int64
 	Type   MessageType
 	Typing bool
+	Params map[string]string
 }
 
 type Channel interface {

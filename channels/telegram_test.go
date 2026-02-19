@@ -264,8 +264,9 @@ func TestListenBroadcastsToMultipleReceiveChannels(t *testing.T) {
 								"type": "private",
 							},
 							"from": map[string]any{
-								"id":     77,
-								"is_bot": false,
+								"id":       77,
+								"is_bot":   false,
+								"username": "alice",
 							},
 						},
 					},
@@ -326,6 +327,12 @@ func TestListenBroadcastsToMultipleReceiveChannels(t *testing.T) {
 		if message.UserID != 77 {
 			t.Fatalf("unexpected message user id: %d", message.UserID)
 		}
+		if message.Params[ParamUsername] != "alice" {
+			t.Fatalf("unexpected username param: %q", message.Params[ParamUsername])
+		}
+		if message.Params[ParamDisplayName] != "@alice" {
+			t.Fatalf("unexpected display_name param: %q", message.Params[ParamDisplayName])
+		}
 	}
 
 	cancel()
@@ -336,5 +343,24 @@ func TestListenBroadcastsToMultipleReceiveChannels(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("timed out waiting for listen to stop")
+	}
+}
+
+func TestToChannelMessageDisplayNameFallback(t *testing.T) {
+	message := &TelegramMessage{
+		Text: "hello",
+		Chat: TelegramChat{ID: 77, Type: "private"},
+		From: &TelegramUser{ID: 77, FirstName: "Fernando", LastName: "PN"},
+	}
+
+	channelMessage, ok := toChannelMessage(message)
+	if !ok {
+		t.Fatal("expected message to be converted")
+	}
+	if channelMessage.Params[ParamUsername] != "" {
+		t.Fatalf("expected empty username, got %q", channelMessage.Params[ParamUsername])
+	}
+	if channelMessage.Params[ParamDisplayName] != "Fernando PN" {
+		t.Fatalf("unexpected display_name param: %q", channelMessage.Params[ParamDisplayName])
 	}
 }

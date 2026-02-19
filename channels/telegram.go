@@ -302,8 +302,82 @@ func toChannelMessage(message *TelegramMessage) (ChannelMessage, bool) {
 	if userID == 0 {
 		return ChannelMessage{}, false
 	}
+	return ChannelMessage{Text: message.Text, UserID: userID, Type: TextMessage, Params: telegramMessageParams(message)}, true
+}
 
-	return ChannelMessage{Text: message.Text, UserID: userID, Type: TextMessage}, true
+func telegramMessageParams(message *TelegramMessage) map[string]string {
+	if message == nil {
+		return nil
+	}
+	params := make(map[string]string)
+	if username := telegramMessageUsername(message); username != "" {
+		params[ParamUsername] = username
+	}
+	if displayName := telegramMessageDisplayName(message); displayName != "" {
+		params[ParamDisplayName] = displayName
+	}
+	if len(params) == 0 {
+		return nil
+	}
+	return params
+}
+
+func telegramMessageUsername(message *TelegramMessage) string {
+	if message == nil {
+		return ""
+	}
+	if message.From != nil {
+		if username := normalizeTelegramUsername(message.From.Username); username != "" {
+			return username
+		}
+	}
+	if username := normalizeTelegramUsername(message.Chat.Username); username != "" {
+		return username
+	}
+	return ""
+}
+
+func telegramMessageDisplayName(message *TelegramMessage) string {
+	if message == nil {
+		return ""
+	}
+	if message.From != nil {
+		if name := telegramPersonName(message.From.FirstName, message.From.LastName); name != "" {
+			return name
+		}
+	}
+	if message.SenderChat != nil {
+		if title := strings.TrimSpace(message.SenderChat.Title); title != "" {
+			return title
+		}
+		if username := normalizeTelegramUsername(message.SenderChat.Username); username != "" {
+			return "@" + username
+		}
+	}
+	if name := telegramPersonName(message.Chat.FirstName, message.Chat.LastName); name != "" {
+		return name
+	}
+	if title := strings.TrimSpace(message.Chat.Title); title != "" {
+		return title
+	}
+	if username := telegramMessageUsername(message); username != "" {
+		return "@" + username
+	}
+	return ""
+}
+
+func telegramPersonName(firstName string, lastName string) string {
+	firstName = strings.TrimSpace(firstName)
+	lastName = strings.TrimSpace(lastName)
+	return strings.TrimSpace(firstName + " " + lastName)
+}
+
+func normalizeTelegramUsername(username string) string {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return ""
+	}
+	return strings.TrimPrefix(username, "@")
 }
 
 func (t *Telegram) do(ctx context.Context, method string, request any, result any) error {
