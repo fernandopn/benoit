@@ -40,13 +40,14 @@ func TestParseTUIMode(t *testing.T) {
 	tests := []struct {
 		name    string
 		raw     string
-		want    bool
+		want    tuiMode
 		wantErr bool
 	}{
-		{name: "simple", raw: "simple", want: true},
-		{name: "bubbletea", raw: "bubbletea", want: false},
-		{name: "trimmed", raw: " bubbletea ", want: false},
-		{name: "case insensitive", raw: "SiMpLe", want: true},
+		{name: "simple", raw: "simple", want: tuiModeSimple},
+		{name: "bubbletea", raw: "bubbletea", want: tuiModeBubbleTea},
+		{name: "telegram", raw: "telegram", want: tuiModeTelegram},
+		{name: "trimmed", raw: " bubbletea ", want: tuiModeBubbleTea},
+		{name: "case insensitive", raw: "SiMpLe", want: tuiModeSimple},
 		{name: "invalid", raw: "nope", wantErr: true},
 	}
 

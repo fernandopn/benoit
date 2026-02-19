@@ -4,10 +4,12 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
 
+	"github.com/fernandopn/benoid/channels"
 	"github.com/fernandopn/benoid/middleware"
 	"github.com/fernandopn/benoid/providers"
 	"github.com/fernandopn/benoid/tools"
@@ -19,6 +21,7 @@ func main() {
 	const OPENAI_REASONING_EFFORT = shared.ReasoningEffortHigh
 	const OPENAI_REASONING_SUMMARY = shared.ReasoningSummaryDetailed
 	const defaultTUIMode = "simple"
+	const defaultTelegramPollTimeoutSeconds = 30
 
 	defaultRoot, rootErr := os.Getwd()
 	if rootErr != nil {
@@ -29,17 +32,22 @@ func main() {
 	timeout := flag.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	dbPath := flag.String("db-path", "", "sqlite db path for chat logging")
-	tuiMode := flag.String("tui", defaultTUIMode, "tui mode: simple or bubbletea")
+	tuiModeFlag := flag.String("tui", defaultTUIMode, "tui mode: simple, bubbletea, or telegram")
+	telegramPollTimeoutSeconds := flag.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
 	flag.Parse()
 
 	var (
-		provider      providers.Provider
-		useSimpleMode bool
-		err           error
+		provider providers.Provider
+		mode     tuiMode
+		err      error
 	)
-	useSimpleMode, err = parseTUIMode(*tuiMode)
+	mode, err = parseTUIMode(*tuiModeFlag)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "flag error:", err)
+		os.Exit(1)
+	}
+	if *telegramPollTimeoutSeconds < 0 {
+		fmt.Fprintln(os.Stderr, "flag error: -telegram-poll-timeout cannot be negative")
 		os.Exit(1)
 	}
 	openAIParams := providers.OpenAIParams{
@@ -68,9 +76,22 @@ func main() {
 	}
 
 	tuiCtx := context.Background()
-	if err := tui.Run(tuiCtx, provider, *timeout, useSimpleMode); err != nil {
-		fmt.Fprintln(os.Stderr, "tui error:", err)
-		os.Exit(1)
+	if mode == tuiModeTelegram {
+		telegramClient, err := channels.NewTelegramFromEnv(http.DefaultClient)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "telegram init error:", err)
+			os.Exit(1)
+		}
+		if err := tui.RunTelegram(tuiCtx, telegramClient, provider, *timeout, *telegramPollTimeoutSeconds); err != nil {
+			fmt.Fprintln(os.Stderr, "telegram tui error:", err)
+			os.Exit(1)
+		}
+	} else {
+		useSimpleMode := mode == tuiModeSimple
+		if err := tui.Run(tuiCtx, provider, *timeout, useSimpleMode); err != nil {
+			fmt.Fprintln(os.Stderr, "tui error:", err)
+			os.Exit(1)
+		}
 	}
 	if closeMiddleware != nil {
 		if err := closeMiddleware(); err != nil {
@@ -85,10 +106,10 @@ func selectedTools(fsRoot string) ([]tools.Tool, error) {
 		requiresFS bool
 	}
 	allTools := []toolSpec{
-		{
-			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewClockTool() },
-			requiresFS: false,
-		},
+		// {
+		// 	factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewClockTool() },
+		// 	requiresFS: false,
+		// },
 		{
 			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewOpenAICodeInterpreterTool() },
 			requiresFS: false,
@@ -97,14 +118,14 @@ func selectedTools(fsRoot string) ([]tools.Tool, error) {
 			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewOpenAIWebSearchTool() },
 			requiresFS: false,
 		},
-		{
-			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewListFilesToolWithFS(fs) },
-			requiresFS: true,
-		},
-		{
-			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewCurrentDirectoryToolWithFS(fs) },
-			requiresFS: true,
-		},
+		// {
+		// 	factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewListFilesToolWithFS(fs) },
+		// 	requiresFS: true,
+		// },
+		// {
+		// 	factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewCurrentDirectoryToolWithFS(fs) },
+		// 	requiresFS: true,
+		// },
 		{
 			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewMatonGCalendarTool() },
 			requiresFS: false,
@@ -113,10 +134,10 @@ func selectedTools(fsRoot string) ([]tools.Tool, error) {
 			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewMatonGmailTool() },
 			requiresFS: false,
 		},
-		{
-			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewReadFileToolWithFS(fs) },
-			requiresFS: true,
-		},
+		// {
+		// 	factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewReadFileToolWithFS(fs) },
+		// 	requiresFS: true,
+		// },
 	}
 
 	useFS := false
@@ -144,13 +165,23 @@ func selectedTools(fsRoot string) ([]tools.Tool, error) {
 	return toolSet, nil
 }
 
-func parseTUIMode(raw string) (bool, error) {
+type tuiMode int
+
+const (
+	tuiModeSimple tuiMode = iota
+	tuiModeBubbleTea
+	tuiModeTelegram
+)
+
+func parseTUIMode(raw string) (tuiMode, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
 	case "simple":
-		return true, nil
+		return tuiModeSimple, nil
 	case "bubbletea":
-		return false, nil
+		return tuiModeBubbleTea, nil
+	case "telegram":
+		return tuiModeTelegram, nil
 	default:
-		return false, fmt.Errorf("invalid -tui value %q (use simple or bubbletea)", raw)
+		return tuiModeSimple, fmt.Errorf("invalid -tui value %q (use simple, bubbletea, or telegram)", raw)
 	}
 }

@@ -25,8 +25,11 @@ official Go SDK.
 - `-db-path`
   - enable sqlite logging of conversation messages
 - `-tui`
-  - interface mode (`simple` or `bubbletea`)
+  - interface mode (`simple`, `bubbletea`, or `telegram`)
   - default: `simple`
+- `-telegram-poll-timeout`
+  - `getUpdates` long-poll timeout in seconds (used when `-tui telegram`)
+  - default: `30`
 
 ## Behavior notes
 
@@ -36,3 +39,4 @@ official Go SDK.
 - Storage errors are surfaced into the chat stream as `MsgTypeError` events
   while preserving normal response messages.
 - `maton_gcalendar` and `maton_gmail` require `MATON_API_KEY` and active Maton connections.
+- Telegram mode requires `TELEGRAM_API_KEY` for bot authentication.
