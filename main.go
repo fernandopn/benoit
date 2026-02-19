@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -31,8 +30,6 @@ func main() {
 	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	dbPath := flag.String("db-path", "", "sqlite db path for chat logging")
 	tuiMode := flag.String("tui", defaultTUIMode, "tui mode: simple or bubbletea")
-	disableTools := flag.Bool("no-tools", false, "disable tool usage")
-	toolsList := flag.String("tools", "", "comma-separated tools to enable when tools are allowed. options: clock,list_files,get_current_directory,read_file (default: all)")
 	flag.Parse()
 
 	var (
@@ -52,7 +49,7 @@ func main() {
 	initCtx, initCancel := context.WithTimeout(context.Background(), *timeout)
 	defer initCancel()
 
-	toolSet, err := selectedTools(*disableTools, *toolsList, *fsRoot)
+	toolSet, err := selectedTools(*fsRoot)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tool config error:", err)
 		os.Exit(1)
@@ -81,42 +78,42 @@ func main() {
 		}
 	}
 }
-func selectedTools(noTools bool, toolsArg, fsRoot string) ([]tools.Tool, error) {
-	if noTools {
-		return nil, nil
+
+func selectedTools(fsRoot string) ([]tools.Tool, error) {
+	type toolSpec struct {
+		factory    func(tools.FileSystem) tools.Tool
+		requiresFS bool
+	}
+	allTools := []toolSpec{
+		{
+			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewClockTool() },
+			requiresFS: false,
+		},
+		{
+			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewListFilesToolWithFS(fs) },
+			requiresFS: true,
+		},
+		{
+			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewCurrentDirectoryToolWithFS(fs) },
+			requiresFS: true,
+		},
+		{
+			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewMatonGCalendarTool() },
+			requiresFS: false,
+		},
+		{
+			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewMatonGmailTool() },
+			requiresFS: false,
+		},
+		{
+			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewReadFileToolWithFS(fs) },
+			requiresFS: true,
+		},
 	}
 
-	requested := map[string]bool{}
-	allTools := map[string]func(tools.FileSystem) tools.Tool{
-		"clock":                 func(_ tools.FileSystem) tools.Tool { return tools.NewClockTool() },
-		"list_files":            func(fs tools.FileSystem) tools.Tool { return tools.NewListFilesToolWithFS(fs) },
-		"get_current_directory": func(fs tools.FileSystem) tools.Tool { return tools.NewCurrentDirectoryToolWithFS(fs) },
-		"read_file":             func(fs tools.FileSystem) tools.Tool { return tools.NewReadFileToolWithFS(fs) },
-	}
-
-	var useFS bool
-	if strings.TrimSpace(toolsArg) == "" {
-		for name := range allTools {
-			requested[name] = true
-		}
-	} else {
-		for _, raw := range strings.Split(toolsArg, ",") {
-			name := strings.TrimSpace(raw)
-			if name == "" {
-				continue
-			}
-			if _, ok := allTools[name]; !ok {
-				return nil, fmt.Errorf("unknown tool: %s", name)
-			}
-			requested[name] = true
-		}
-		if len(requested) == 0 {
-			return nil, nil
-		}
-	}
-
-	for name := range requested {
-		if name != "clock" {
+	useFS := false
+	for _, spec := range allTools {
+		if spec.requiresFS {
 			useFS = true
 			break
 		}
@@ -131,17 +128,9 @@ func selectedTools(noTools bool, toolsArg, fsRoot string) ([]tools.Tool, error) 
 		fs = resolvedFS
 	}
 
-	names := make([]string, 0, len(requested))
-	for name := range requested {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-
-	toolSet := make([]tools.Tool, 0, len(names))
-	for _, name := range names {
-		if factory, ok := allTools[name]; ok {
-			toolSet = append(toolSet, factory(fs))
-		}
+	toolSet := make([]tools.Tool, 0, len(allTools))
+	for _, spec := range allTools {
+		toolSet = append(toolSet, spec.factory(fs))
 	}
 
 	return toolSet, nil
