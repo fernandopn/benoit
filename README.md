@@ -30,7 +30,7 @@ official Go SDK.
 
 ## Behavior notes
 
-- Built-in tools are always enabled: `clock`, `list_files`, `get_current_directory`, `read_file`, `maton_gcalendar`, and `maton_gmail`.
+- Built-in tools are always enabled: `clock`, `code_interpreter`, `web_search`, `list_files`, `get_current_directory`, `read_file`, `maton_gcalendar`, and `maton_gmail`.
 - When no TTY is detected for stdin/stdout, the app automatically uses
   simple line-based behavior.
 - Storage errors are surfaced into the chat stream as `MsgTypeError` events

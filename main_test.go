@@ -14,10 +14,10 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("expected no error, got %v", err)
 		}
 		names := toolNames(selected)
-		if len(names) != 6 {
-			t.Fatalf("expected 6 tools, got %d: %v", len(names), names)
+		if len(names) != 8 {
+			t.Fatalf("expected 8 tools, got %d: %v", len(names), names)
 		}
-		expected := []string{"get_time", "list_files", "get_current_directory", "maton_gcalendar", "maton_gmail", "read_file"}
+		expected := []string{"get_time", "code_interpreter", "web_search", "list_files", "get_current_directory", "maton_gcalendar", "maton_gmail", "read_file"}
 		for i, want := range expected {
 			if names[i] != want {
 				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)

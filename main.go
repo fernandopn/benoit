@@ -90,6 +90,14 @@ func selectedTools(fsRoot string) ([]tools.Tool, error) {
 			requiresFS: false,
 		},
 		{
+			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewOpenAICodeInterpreterTool() },
+			requiresFS: false,
+		},
+		{
+			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewOpenAIWebSearchTool() },
+			requiresFS: false,
+		},
+		{
 			factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewListFilesToolWithFS(fs) },
 			requiresFS: true,
 		},
