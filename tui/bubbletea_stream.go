@@ -6,7 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/providers"
 )
 
 func startStream(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration, seq int) tea.Cmd {

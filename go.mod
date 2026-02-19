@@ -1,4 +1,4 @@
-module github.com/fernandopn/benoid
+module github.com/fernandopn/benoit
 
 go 1.25.0
 

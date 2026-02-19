@@ -10,21 +10,19 @@ import (
 )
 
 func TestMatonGmailToolRequiresAPIKey(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "")
-	tool := NewMatonGmailToolWithHTTPClient(&recordingDoer{})
+	tool := NewMatonGmailTool(nil)
 	out, err := tool.Call(context.Background(), map[string]any{"action": "list_messages"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "MATON_API_KEY is not set") {
+	if !strings.Contains(out, "maton client is not configured") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
 
 func TestMatonGmailToolListMessages(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"messages":[{"id":"msg_1"}]}`}
-	tool := NewMatonGmailToolWithHTTPClient(doer)
+	tool := NewMatonGmailTool(newMatonToolClient(t, doer))
 
 	out, err := tool.Call(context.Background(), map[string]any{
 		"action":        "list_messages",
@@ -64,9 +62,8 @@ func TestMatonGmailToolListMessages(t *testing.T) {
 }
 
 func TestMatonGmailToolSendMessage(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"id":"msg_1"}`}
-	tool := NewMatonGmailToolWithHTTPClient(doer)
+	tool := NewMatonGmailTool(newMatonToolClient(t, doer))
 	rfc822 := "To: receiver@example.com\r\nSubject: Hello\r\n\r\nHi"
 	raw := base64.RawURLEncoding.EncodeToString([]byte(rfc822))
 
@@ -101,9 +98,8 @@ func TestMatonGmailToolSendMessage(t *testing.T) {
 }
 
 func TestMatonGmailToolSendMessageFromStructuredFields(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"id":"msg_2"}`}
-	tool := NewMatonGmailToolWithHTTPClient(doer)
+	tool := NewMatonGmailTool(newMatonToolClient(t, doer))
 
 	_, err := tool.Call(context.Background(), map[string]any{
 		"action": "send_message",
@@ -129,9 +125,8 @@ func TestMatonGmailToolSendMessageFromStructuredFields(t *testing.T) {
 }
 
 func TestMatonGmailToolSendMessageFromTopLevelStructuredFields(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"id":"msg_3"}`}
-	tool := NewMatonGmailToolWithHTTPClient(doer)
+	tool := NewMatonGmailTool(newMatonToolClient(t, doer))
 
 	_, err := tool.Call(context.Background(), map[string]any{
 		"action":  "send_message",
@@ -155,8 +150,7 @@ func TestMatonGmailToolSendMessageFromTopLevelStructuredFields(t *testing.T) {
 }
 
 func TestMatonGmailToolSendMessageRejectsInvalidRaw(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
-	tool := NewMatonGmailToolWithHTTPClient(&recordingDoer{})
+	tool := NewMatonGmailTool(newMatonToolClient(t, &recordingDoer{}))
 
 	out, err := tool.Call(context.Background(), map[string]any{
 		"action": "send_message",
@@ -173,9 +167,8 @@ func TestMatonGmailToolSendMessageRejectsInvalidRaw(t *testing.T) {
 }
 
 func TestMatonGmailToolSendDraftFromID(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"id":"draft_1"}`}
-	tool := NewMatonGmailToolWithHTTPClient(doer)
+	tool := NewMatonGmailTool(newMatonToolClient(t, doer))
 
 	_, err := tool.Call(context.Background(), map[string]any{
 		"action":   "send_draft",
@@ -193,7 +186,7 @@ func TestMatonGmailToolSendDraftFromID(t *testing.T) {
 }
 
 func TestMatonGmailToolInvalidAction(t *testing.T) {
-	tool := NewMatonGmailToolWithClient(&MatonClient{})
+	tool := NewMatonGmailTool(&MatonClient{})
 	out, err := tool.Call(context.Background(), map[string]any{"action": "bogus"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -222,4 +215,13 @@ func extractRawFromBody(t *testing.T, body string) string {
 		t.Fatalf("raw is not valid base64url: %v", err)
 	}
 	return string(decoded)
+}
+
+func newMatonToolClient(t *testing.T, doer httpDoer) *MatonClient {
+	t.Helper()
+	client, err := NewMatonClient("test-key", doer)
+	if err != nil {
+		t.Fatalf("new maton client: %v", err)
+	}
+	return client
 }

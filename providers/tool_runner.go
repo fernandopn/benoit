@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/fernandopn/benoid/tools"
+	"github.com/fernandopn/benoit/tools"
 	"github.com/openai/openai-go/v3/responses"
 )
 

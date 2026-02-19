@@ -8,14 +8,11 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"strings"
 )
 
 const (
-	MatonAPIKeyEnv = "MATON_API_KEY"
-
 	matonAuthHeader       = "Authorization"
 	matonConnectionHeader = "Maton-Connection"
 
@@ -37,14 +34,6 @@ type MatonClient struct {
 
 func NewMatonClient(apiKey string, httpClient httpDoer) (*MatonClient, error) {
 	return NewMatonClientWithBaseURLs(apiKey, matonGatewayBaseURL, matonControlBaseURL, httpClient)
-}
-
-func NewMatonClientFromEnv(httpClient httpDoer) (*MatonClient, error) {
-	apiKey := strings.TrimSpace(os.Getenv(MatonAPIKeyEnv))
-	if apiKey == "" {
-		return nil, fmt.Errorf("%s is not set", MatonAPIKeyEnv)
-	}
-	return NewMatonClient(apiKey, httpClient)
 }
 
 func NewMatonClientWithBaseURLs(apiKey, gatewayBaseURL, controlBaseURL string, httpClient httpDoer) (*MatonClient, error) {

@@ -1,12 +1,13 @@
-# benoid
+# benoit
 
 Minimal terminal chat client for the OpenAI Responses API built with the
 official Go SDK.
 
 ## Run
 
-- `go run .`
 - `OPENAI_API_KEY=... go run .`
+- `OPENAI_API_KEY=... MATON_API_KEY=... go run .`
+- `OPENAI_API_KEY=... TELEGRAM_API_KEY=... go run . -tui telegram`
 
 ## Usage
 
@@ -30,13 +31,18 @@ official Go SDK.
 - `-telegram-poll-timeout`
   - `getUpdates` long-poll timeout in seconds (used when `-tui telegram`)
   - default: `30`
+- `-telegram-allowed-users`
+  - comma-separated Telegram user IDs accepted in Telegram mode
+  - default: `8230557735`
 
 ## Behavior notes
 
-- Built-in tools are always enabled: `clock`, `code_interpreter`, `web_search`, `list_files`, `get_current_directory`, `read_file`, `maton_gcalendar`, and `maton_gmail`.
+- Credentials are loaded in `main.go` during startup (`OPENAI_API_KEY`, optional `MATON_API_KEY`, and `TELEGRAM_API_KEY` when `-tui telegram`).
+- Tools always enabled: `code_interpreter`, `web_search`.
+- `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
 - When no TTY is detected for stdin/stdout, the app automatically uses
   simple line-based behavior.
 - Storage errors are surfaced into the chat stream as `MsgTypeError` events
   while preserving normal response messages.
-- `maton_gcalendar` and `maton_gmail` require `MATON_API_KEY` and active Maton connections.
 - Telegram mode requires `TELEGRAM_API_KEY` for bot authentication.
+- Telegram session history is isolated per chat when the provider supports session-aware routing.

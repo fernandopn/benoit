@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/providers"
 )
 
 type stubProvider struct {
@@ -30,6 +30,18 @@ func (s *stubProvider) ListModels(_ context.Context) ([]string, error) {
 
 func (s *stubProvider) Name() string {
 	return "stub-provider"
+}
+
+type sessionStubProvider struct {
+	stubProvider
+	sessions []string
+}
+
+func (s *sessionStubProvider) ChatInSession(ctx context.Context, input string, sessionID string) <-chan providers.Msg {
+	_ = ctx
+	_ = input
+	s.sessions = append(s.sessions, sessionID)
+	return s.Chat(context.Background(), input)
 }
 
 func TestSQLiteSavePersistsMessages(t *testing.T) {
@@ -166,4 +178,27 @@ func TestConfigureSQLiteSave(t *testing.T) {
 			t.Fatalf("close middleware error: %v", err)
 		}
 	})
+}
+
+func TestSQLiteSaveForwardsSessionChat(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "chat.db")
+	base := &sessionStubProvider{stubProvider: stubProvider{messages: []providers.Msg{{Type: providers.MsgTypeChat, Value: "ok"}}}}
+	sqlite, err := NewSQLiteSave(context.Background(), base, dbPath)
+	if err != nil {
+		t.Fatalf("new sqlite save: %v", err)
+	}
+	defer sqlite.Close()
+
+	var provider providers.Provider = sqlite
+	sessionProvider, ok := provider.(providers.SessionProvider)
+	if !ok {
+		t.Fatal("expected sqlite middleware to implement SessionProvider")
+	}
+	out := sessionProvider.ChatInSession(context.Background(), "hello", "telegram:99")
+	for range out {
+	}
+
+	if len(base.sessions) != 1 || base.sessions[0] != "telegram:99" {
+		t.Fatalf("unexpected sessions forwarded: %v", base.sessions)
+	}
 }

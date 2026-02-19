@@ -15,20 +15,17 @@ const matonGoogleCalendarApp = "google-calendar"
 
 // MatonGCalendarTool integrates Google Calendar through Maton managed OAuth.
 type MatonGCalendarTool struct {
-	client     *MatonClient
-	httpClient httpDoer
+	client *MatonClient
 }
 
-func NewMatonGCalendarTool() *MatonGCalendarTool {
-	return NewMatonGCalendarToolWithHTTPClient(http.DefaultClient)
-}
+type gcalendarActionHandler func(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error)
 
-func NewMatonGCalendarToolWithHTTPClient(httpClient httpDoer) *MatonGCalendarTool {
-	return &MatonGCalendarTool{httpClient: httpClient}
+func NewMatonGCalendarTool(client *MatonClient) *MatonGCalendarTool {
+	return &MatonGCalendarTool{client: client}
 }
 
 func NewMatonGCalendarToolWithClient(client *MatonClient) *MatonGCalendarTool {
-	return &MatonGCalendarTool{client: client}
+	return NewMatonGCalendarTool(client)
 }
 
 func (m *MatonGCalendarTool) Name() string {
@@ -135,111 +132,11 @@ func (m *MatonGCalendarTool) Call(ctx context.Context, args map[string]any) (str
 		return toolError(err), nil
 	}
 
-	var payload []byte
-	switch action {
-	case "list_calendars":
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("users", "me", "calendarList"), query, nil, connectionID)
-	case "get_calendar":
-		calendarID, argErr := requireStringArg(args, "calendar_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID)), query, nil, connectionID)
-	case "list_events":
-		calendarID, argErr := requireStringArg(args, "calendar_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID), "events"), query, nil, connectionID)
-	case "get_event":
-		calendarID, argErr := requireStringArg(args, "calendar_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		eventID, argErr := requireStringArg(args, "event_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, nil, connectionID)
-	case "create_event":
-		calendarID, eventBody, argErr := m.requireCalendarAndEvent(args)
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.calendarPath("calendars", url.PathEscape(calendarID), "events"), query, eventBody, connectionID)
-	case "update_event":
-		calendarID, eventID, eventBody, argErr := m.requireCalendarEventAndBody(args)
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPut, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, eventBody, connectionID)
-	case "patch_event":
-		calendarID, eventID, eventBody, argErr := m.requireCalendarEventAndBody(args)
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPatch, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, eventBody, connectionID)
-	case "delete_event":
-		calendarID, argErr := requireStringArg(args, "calendar_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		eventID, argErr := requireStringArg(args, "event_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodDelete, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, nil, connectionID)
-	case "quick_add_event":
-		calendarID, argErr := requireStringArg(args, "calendar_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		text, argErr := requireStringArg(args, "text")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		if query == nil {
-			query = map[string]string{}
-		}
-		query["text"] = text
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.calendarPath("calendars", url.PathEscape(calendarID), "events", "quickAdd"), query, nil, connectionID)
-	case "free_busy":
-		freeBusyBody, argErr := requireObjectArg(args, "free_busy")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.calendarPath("freeBusy"), query, freeBusyBody, connectionID)
-	case "list_connections":
-		if query == nil {
-			query = map[string]string{}
-		}
-		if _, ok := query["app"]; !ok {
-			query["app"] = matonGoogleCalendarApp
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodGet, "connections", query, nil)
-	case "create_connection":
-		body := map[string]any{"app": matonGoogleCalendarApp}
-		if metadata, ok, argErr := optionalObjectArg(args, "metadata"); argErr != nil {
-			return toolError(argErr), nil
-		} else if ok {
-			body["metadata"] = metadata
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodPost, "connections", query, body)
-	case "get_connection":
-		targetConnectionID, argErr := requireStringArg(args, "connection_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodGet, "connections/"+url.PathEscape(targetConnectionID), query, nil)
-	case "delete_connection":
-		targetConnectionID, argErr := requireStringArg(args, "connection_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodDelete, "connections/"+url.PathEscape(targetConnectionID), query, nil)
-	default:
+	handler, ok := m.actionHandlers()[action]
+	if !ok {
 		return toolError(fmtUnsupportedAction(action)), nil
 	}
+	payload, err := handler(ctx, client, args, query, connectionID)
 	if err != nil {
 		return toolError(err), nil
 	}
@@ -248,10 +145,163 @@ func (m *MatonGCalendarTool) Call(ctx context.Context, args map[string]any) (str
 }
 
 func (m *MatonGCalendarTool) resolveClient() (*MatonClient, error) {
-	if m.client != nil {
-		return m.client, nil
+	if m == nil || m.client == nil {
+		return nil, errors.New("maton client is not configured")
 	}
-	return NewMatonClientFromEnv(m.httpClient)
+	return m.client, nil
+}
+
+func (m *MatonGCalendarTool) actionHandlers() map[string]gcalendarActionHandler {
+	return map[string]gcalendarActionHandler{
+		"list_calendars":    m.handleListCalendars,
+		"get_calendar":      m.handleGetCalendar,
+		"list_events":       m.handleListEvents,
+		"get_event":         m.handleGetEvent,
+		"create_event":      m.handleCreateEvent,
+		"update_event":      m.handleUpdateEvent,
+		"patch_event":       m.handlePatchEvent,
+		"delete_event":      m.handleDeleteEvent,
+		"quick_add_event":   m.handleQuickAddEvent,
+		"free_busy":         m.handleFreeBusy,
+		"list_connections":  m.handleListConnections,
+		"create_connection": m.handleCreateConnection,
+		"get_connection":    m.handleGetConnection,
+		"delete_connection": m.handleDeleteConnection,
+	}
+}
+
+func (m *MatonGCalendarTool) handleListCalendars(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	return client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("users", "me", "calendarList"), query, nil, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleGetCalendar(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, err := requireStringArg(args, "calendar_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID)), query, nil, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleListEvents(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, err := requireStringArg(args, "calendar_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID), "events"), query, nil, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleGetEvent(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, err := requireStringArg(args, "calendar_id")
+	if err != nil {
+		return nil, err
+	}
+	eventID, err := requireStringArg(args, "event_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, nil, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleCreateEvent(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, eventBody, err := m.requireCalendarAndEvent(args)
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.calendarPath("calendars", url.PathEscape(calendarID), "events"), query, eventBody, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleUpdateEvent(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, eventID, eventBody, err := m.requireCalendarEventAndBody(args)
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPut, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, eventBody, connectionID)
+}
+
+func (m *MatonGCalendarTool) handlePatchEvent(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, eventID, eventBody, err := m.requireCalendarEventAndBody(args)
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPatch, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, eventBody, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleDeleteEvent(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, err := requireStringArg(args, "calendar_id")
+	if err != nil {
+		return nil, err
+	}
+	eventID, err := requireStringArg(args, "event_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodDelete, m.calendarPath("calendars", url.PathEscape(calendarID), "events", url.PathEscape(eventID)), query, nil, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleQuickAddEvent(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	calendarID, err := requireStringArg(args, "calendar_id")
+	if err != nil {
+		return nil, err
+	}
+	text, err := requireStringArg(args, "text")
+	if err != nil {
+		return nil, err
+	}
+	if query == nil {
+		query = map[string]string{}
+	}
+	query["text"] = text
+	return client.GatewayJSON(ctx, http.MethodPost, m.calendarPath("calendars", url.PathEscape(calendarID), "events", "quickAdd"), query, nil, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleFreeBusy(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	freeBusyBody, err := requireObjectArg(args, "free_busy")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.calendarPath("freeBusy"), query, freeBusyBody, connectionID)
+}
+
+func (m *MatonGCalendarTool) handleListConnections(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	_ = connectionID
+	if query == nil {
+		query = map[string]string{}
+	}
+	if _, ok := query["app"]; !ok {
+		query["app"] = matonGoogleCalendarApp
+	}
+	return client.ControlJSON(ctx, http.MethodGet, "connections", query, nil)
+}
+
+func (m *MatonGCalendarTool) handleCreateConnection(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = connectionID
+	body := map[string]any{"app": matonGoogleCalendarApp}
+	if metadata, ok, err := optionalObjectArg(args, "metadata"); err != nil {
+		return nil, err
+	} else if ok {
+		body["metadata"] = metadata
+	}
+	return client.ControlJSON(ctx, http.MethodPost, "connections", query, body)
+}
+
+func (m *MatonGCalendarTool) handleGetConnection(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = connectionID
+	targetConnectionID, err := requireStringArg(args, "connection_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.ControlJSON(ctx, http.MethodGet, "connections/"+url.PathEscape(targetConnectionID), query, nil)
+}
+
+func (m *MatonGCalendarTool) handleDeleteConnection(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = connectionID
+	targetConnectionID, err := requireStringArg(args, "connection_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.ControlJSON(ctx, http.MethodDelete, "connections/"+url.PathEscape(targetConnectionID), query, nil)
 }
 
 func (m *MatonGCalendarTool) calendarPath(parts ...string) string {

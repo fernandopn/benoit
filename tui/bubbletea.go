@@ -13,7 +13,7 @@ import (
 	"github.com/charmbracelet/glamour"
 	glamouransi "github.com/charmbracelet/glamour/ansi"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/providers"
 	"golang.org/x/term"
 )
 
@@ -411,7 +411,7 @@ func (m model) View() string {
 }
 
 func (m model) headerLine() string {
-	left := fmt.Sprintf("Benoid · %s", m.provider.Name())
+	left := fmt.Sprintf("Benoit · %s", m.provider.Name())
 	right := "ready"
 	if m.streaming {
 		right = "streaming..."

@@ -18,20 +18,17 @@ const matonGoogleMailApp = "google-mail"
 
 // MatonGmailTool integrates Gmail through Maton managed OAuth.
 type MatonGmailTool struct {
-	client     *MatonClient
-	httpClient httpDoer
+	client *MatonClient
 }
 
-func NewMatonGmailTool() *MatonGmailTool {
-	return NewMatonGmailToolWithHTTPClient(http.DefaultClient)
-}
+type gmailActionHandler func(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error)
 
-func NewMatonGmailToolWithHTTPClient(httpClient httpDoer) *MatonGmailTool {
-	return &MatonGmailTool{httpClient: httpClient}
+func NewMatonGmailTool(client *MatonClient) *MatonGmailTool {
+	return &MatonGmailTool{client: client}
 }
 
 func NewMatonGmailToolWithClient(client *MatonClient) *MatonGmailTool {
-	return &MatonGmailTool{client: client}
+	return NewMatonGmailTool(client)
 }
 
 func (m *MatonGmailTool) Name() string {
@@ -149,110 +146,11 @@ func (m *MatonGmailTool) Call(ctx context.Context, args map[string]any) (string,
 		return toolError(err), nil
 	}
 
-	var payload []byte
-	switch action {
-	case "list_messages":
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("messages"), query, nil, connectionID)
-	case "get_message":
-		messageID, argErr := requireStringArg(args, "message_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("messages", url.PathEscape(messageID)), query, nil, connectionID)
-	case "send_message":
-		messageBody, ok, argErr := optionalObjectArg(args, "message")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		if !ok {
-			messageBody = collectTopLevelMessageFields(args)
-			if len(messageBody) == 0 {
-				return toolError(fmt.Errorf("missing required argument: message")), nil
-			}
-		}
-		sendBody, argErr := normalizeSendMessageBody(messageBody)
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", "send"), query, sendBody, connectionID)
-	case "list_labels":
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("labels"), query, nil, connectionID)
-	case "list_threads":
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("threads"), query, nil, connectionID)
-	case "get_thread":
-		threadID, argErr := requireStringArg(args, "thread_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("threads", url.PathEscape(threadID)), query, nil, connectionID)
-	case "modify_message_labels":
-		messageID, argErr := requireStringArg(args, "message_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		modifyBody, argErr := requireObjectArg(args, "modify")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", url.PathEscape(messageID), "modify"), query, modifyBody, connectionID)
-	case "trash_message":
-		messageID, argErr := requireStringArg(args, "message_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", url.PathEscape(messageID), "trash"), query, nil, connectionID)
-	case "create_draft":
-		draftBody, argErr := requireObjectArg(args, "draft")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("drafts"), query, draftBody, connectionID)
-	case "send_draft":
-		draftSendBody, ok, argErr := optionalObjectArg(args, "draft_send")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		if !ok {
-			draftID, argErr := requireStringArg(args, "draft_id")
-			if argErr != nil {
-				return toolError(argErr), nil
-			}
-			draftSendBody = map[string]any{"id": draftID}
-		}
-		payload, err = client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("drafts", "send"), query, draftSendBody, connectionID)
-	case "get_profile":
-		payload, err = client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("profile"), query, nil, connectionID)
-	case "list_connections":
-		if query == nil {
-			query = map[string]string{}
-		}
-		if _, ok := query["app"]; !ok {
-			query["app"] = matonGoogleMailApp
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodGet, "connections", query, nil)
-	case "create_connection":
-		body := map[string]any{"app": matonGoogleMailApp}
-		if metadata, ok, argErr := optionalObjectArg(args, "metadata"); argErr != nil {
-			return toolError(argErr), nil
-		} else if ok {
-			body["metadata"] = metadata
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodPost, "connections", query, body)
-	case "get_connection":
-		targetConnectionID, argErr := requireStringArg(args, "connection_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodGet, "connections/"+url.PathEscape(targetConnectionID), query, nil)
-	case "delete_connection":
-		targetConnectionID, argErr := requireStringArg(args, "connection_id")
-		if argErr != nil {
-			return toolError(argErr), nil
-		}
-		payload, err = client.ControlJSON(ctx, http.MethodDelete, "connections/"+url.PathEscape(targetConnectionID), query, nil)
-	default:
+	handler, ok := m.actionHandlers()[action]
+	if !ok {
 		return toolError(fmtUnsupportedGmailAction(action)), nil
 	}
+	payload, err := handler(ctx, client, args, query, connectionID)
 	if err != nil {
 		return toolError(err), nil
 	}
@@ -261,10 +159,168 @@ func (m *MatonGmailTool) Call(ctx context.Context, args map[string]any) (string,
 }
 
 func (m *MatonGmailTool) resolveClient() (*MatonClient, error) {
-	if m.client != nil {
-		return m.client, nil
+	if m == nil || m.client == nil {
+		return nil, errors.New("maton client is not configured")
 	}
-	return NewMatonClientFromEnv(m.httpClient)
+	return m.client, nil
+}
+
+func (m *MatonGmailTool) actionHandlers() map[string]gmailActionHandler {
+	return map[string]gmailActionHandler{
+		"list_messages":         m.handleListMessages,
+		"get_message":           m.handleGetMessage,
+		"send_message":          m.handleSendMessage,
+		"list_labels":           m.handleListLabels,
+		"list_threads":          m.handleListThreads,
+		"get_thread":            m.handleGetThread,
+		"modify_message_labels": m.handleModifyMessageLabels,
+		"trash_message":         m.handleTrashMessage,
+		"create_draft":          m.handleCreateDraft,
+		"send_draft":            m.handleSendDraft,
+		"get_profile":           m.handleGetProfile,
+		"list_connections":      m.handleListConnections,
+		"create_connection":     m.handleCreateConnection,
+		"get_connection":        m.handleGetConnection,
+		"delete_connection":     m.handleDeleteConnection,
+	}
+}
+
+func (m *MatonGmailTool) handleListMessages(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	return client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("messages"), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleGetMessage(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	messageID, err := requireStringArg(args, "message_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("messages", url.PathEscape(messageID)), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleSendMessage(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	messageBody, ok, err := optionalObjectArg(args, "message")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		messageBody = collectTopLevelMessageFields(args)
+		if len(messageBody) == 0 {
+			return nil, fmt.Errorf("missing required argument: message")
+		}
+	}
+	sendBody, err := normalizeSendMessageBody(messageBody)
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", "send"), query, sendBody, connectionID)
+}
+
+func (m *MatonGmailTool) handleListLabels(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	return client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("labels"), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleListThreads(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	return client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("threads"), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleGetThread(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	threadID, err := requireStringArg(args, "thread_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("threads", url.PathEscape(threadID)), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleModifyMessageLabels(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	messageID, err := requireStringArg(args, "message_id")
+	if err != nil {
+		return nil, err
+	}
+	modifyBody, err := requireObjectArg(args, "modify")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", url.PathEscape(messageID), "modify"), query, modifyBody, connectionID)
+}
+
+func (m *MatonGmailTool) handleTrashMessage(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	messageID, err := requireStringArg(args, "message_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("messages", url.PathEscape(messageID), "trash"), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleCreateDraft(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	draftBody, err := requireObjectArg(args, "draft")
+	if err != nil {
+		return nil, err
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("drafts"), query, draftBody, connectionID)
+}
+
+func (m *MatonGmailTool) handleSendDraft(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	draftSendBody, ok, err := optionalObjectArg(args, "draft_send")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		draftID, err := requireStringArg(args, "draft_id")
+		if err != nil {
+			return nil, err
+		}
+		draftSendBody = map[string]any{"id": draftID}
+	}
+	return client.GatewayJSON(ctx, http.MethodPost, m.gmailPath("drafts", "send"), query, draftSendBody, connectionID)
+}
+
+func (m *MatonGmailTool) handleGetProfile(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	return client.GatewayJSON(ctx, http.MethodGet, m.gmailPath("profile"), query, nil, connectionID)
+}
+
+func (m *MatonGmailTool) handleListConnections(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = args
+	_ = connectionID
+	if query == nil {
+		query = map[string]string{}
+	}
+	if _, ok := query["app"]; !ok {
+		query["app"] = matonGoogleMailApp
+	}
+	return client.ControlJSON(ctx, http.MethodGet, "connections", query, nil)
+}
+
+func (m *MatonGmailTool) handleCreateConnection(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = connectionID
+	body := map[string]any{"app": matonGoogleMailApp}
+	if metadata, ok, err := optionalObjectArg(args, "metadata"); err != nil {
+		return nil, err
+	} else if ok {
+		body["metadata"] = metadata
+	}
+	return client.ControlJSON(ctx, http.MethodPost, "connections", query, body)
+}
+
+func (m *MatonGmailTool) handleGetConnection(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = connectionID
+	targetConnectionID, err := requireStringArg(args, "connection_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.ControlJSON(ctx, http.MethodGet, "connections/"+url.PathEscape(targetConnectionID), query, nil)
+}
+
+func (m *MatonGmailTool) handleDeleteConnection(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
+	_ = connectionID
+	targetConnectionID, err := requireStringArg(args, "connection_id")
+	if err != nil {
+		return nil, err
+	}
+	return client.ControlJSON(ctx, http.MethodDelete, "connections/"+url.PathEscape(targetConnectionID), query, nil)
 }
 
 func (m *MatonGmailTool) gmailPath(parts ...string) string {

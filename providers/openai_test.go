@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fernandopn/benoid/tools"
+	"github.com/fernandopn/benoit/tools"
 	"github.com/openai/openai-go/v3/responses"
 )
 
@@ -228,12 +228,20 @@ func TestParseToolArgs(t *testing.T) {
 }
 
 func TestOpenAIState(t *testing.T) {
-	state := &openAIState{}
-	if state.get() != "" {
+	state := newOpenAIState()
+	if state.get("") != "" {
 		t.Fatal("expected empty state")
 	}
-	state.set("abc")
-	if state.get() != "abc" {
-		t.Fatalf("expected abc, got %q", state.get())
+	state.set("", "abc")
+	if state.get("") != "abc" {
+		t.Fatalf("expected abc, got %q", state.get(""))
+	}
+
+	state.set("telegram:99", "id-99")
+	if state.get("telegram:99") != "id-99" {
+		t.Fatalf("expected id-99, got %q", state.get("telegram:99"))
+	}
+	if state.get("") != "abc" {
+		t.Fatalf("default session changed unexpectedly: %q", state.get(""))
 	}
 }

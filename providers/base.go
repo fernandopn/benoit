@@ -29,3 +29,10 @@ type Provider interface {
 	// Name returns the provider display name.
 	Name() string
 }
+
+// SessionProvider extends Provider with explicit conversation session routing.
+type SessionProvider interface {
+	Provider
+	// ChatInSession runs chat in the provided logical session.
+	ChatInSession(ctx context.Context, input string, sessionID string) <-chan Msg
+}

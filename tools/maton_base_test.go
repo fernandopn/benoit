@@ -5,13 +5,12 @@ import (
 	"testing"
 )
 
-func TestNewMatonClientFromEnvRequiresKey(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "")
-	_, err := NewMatonClientFromEnv(nil)
+func TestNewMatonClientRequiresKey(t *testing.T) {
+	_, err := NewMatonClient("", nil)
 	if err == nil {
-		t.Fatal("expected error when MATON_API_KEY is missing")
+		t.Fatal("expected error when api key is missing")
 	}
-	if !strings.Contains(err.Error(), MatonAPIKeyEnv) {
+	if !strings.Contains(err.Error(), "api key cannot be empty") {
 		t.Fatalf("unexpected error: %v", err)
 	}
 }

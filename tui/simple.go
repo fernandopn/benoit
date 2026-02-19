@@ -11,7 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/providers"
 	"golang.org/x/term"
 )
 
@@ -66,12 +66,9 @@ func RunSimple(provider providers.Provider, timeout time.Duration) {
 
 		writer.Flush()
 
-		ctx, cancel := context.WithTimeout(context.Background(), timeout)
-
 		var (
-			hadError     bool
-			section      *providers.MsgType
-			pendingTools = map[string]pendingToolCall{}
+			hadError bool
+			section  *providers.MsgType
 		)
 
 		switchState := func(next providers.MsgType) {
@@ -85,67 +82,45 @@ func RunSimple(provider providers.Provider, timeout time.Duration) {
 			section = &tt
 		}
 
-		msgs := provider.Chat(ctx, text)
-		for msg := range msgs {
-			switch msg.Type {
-			case providers.MsgTypeChat, providers.MsgTypeReasoningSummary:
-				switchState(msg.Type)
-				if msg.Type == providers.MsgTypeReasoningSummary {
-					fmt.Fprint(writer, colors.style(msg.Value, colors.fgMuted, colors.dim))
-				} else {
-					fmt.Fprint(writer, colors.style(msg.Value, colors.fgStrong))
-				}
+		_, streamErr := streamPrompt(context.Background(), text, timeout, streamStartForProvider(provider, ""), streamCallbacks{
+			OnChat: func(value string) {
+				switchState(providers.MsgTypeChat)
+				fmt.Fprint(writer, colors.style(value, colors.fgStrong))
 				writer.Flush()
-			case providers.MsgTypeError:
-				hadError = true
-				fmt.Fprintln(os.Stderr, colors.style("request error:", colors.bold, colors.fgWarn), msg.Value)
-			case providers.MsgTypeToolCall:
+			},
+			OnReasoning: func(value string) {
+				switchState(providers.MsgTypeReasoningSummary)
+				fmt.Fprint(writer, colors.style(value, colors.fgMuted, colors.dim))
+				writer.Flush()
+			},
+			OnToolCall: func(name string, args string, callID string) {
+				_ = callID
 				switchState(providers.MsgTypeToolCall)
-				callID := strings.TrimSpace(msg.Metadata["call_id"])
-				name := strings.TrimSpace(msg.Metadata["tool"])
-				args := compactWhitespace(strings.TrimSpace(msg.Value))
-				if args == "" {
-					args = "{}"
-				}
-				if callID != "" {
-					pendingTools[callID] = pendingToolCall{name: name, args: args}
-				}
 				writeSimpleToolCard(writer, colors, width, name, args, "Running...")
 				writer.Flush()
-			case providers.MsgTypeToolResult:
+			},
+			OnToolResult: func(name string, args string, output string, callID string) {
+				_ = callID
 				switchState(providers.MsgTypeToolResult)
-				callID := strings.TrimSpace(msg.Metadata["call_id"])
-				name := strings.TrimSpace(msg.Metadata["tool"])
-				args := "{}"
-				if callID != "" {
-					if call, ok := pendingTools[callID]; ok {
-						if name == "" {
-							name = call.name
-						}
-						args = call.args
-						delete(pendingTools, callID)
-					}
-				}
-				if args == "{}" {
-					if rawArgs := strings.TrimSpace(msg.Metadata["args"]); rawArgs != "" {
-						args = compactWhitespace(rawArgs)
-					}
-				}
-				output := strings.TrimSpace(msg.Value)
-				if output == "" {
-					output = "(empty output)"
-				}
 				writeSimpleToolCard(writer, colors, width, name, args, output)
 				writer.Flush()
-			case providers.MsgTypeContextUsage:
+			},
+			OnContextUsage: func(value string, metadata map[string]string) {
 				switchState(providers.MsgTypeContextUsage)
-				if left, ok := contextLeftPercent(msg.Value, msg.Metadata); ok {
+				if left, ok := contextLeftPercent(value, metadata); ok {
 					fmt.Fprintln(writer, colors.style(formatContextLeft(left), colors.fgAccent, colors.dim))
 				}
 				writer.Flush()
-			}
+			},
+			OnError: func(errText string) {
+				hadError = true
+				fmt.Fprintln(os.Stderr, colors.style("request error:", colors.bold, colors.fgWarn), errText)
+			},
+		})
+		if streamErr != nil && !hadError {
+			hadError = true
+			fmt.Fprintln(os.Stderr, colors.style("request error:", colors.bold, colors.fgWarn), streamErr)
 		}
-		cancel()
 
 		if section != nil {
 			fmt.Fprintln(writer)
@@ -220,7 +195,7 @@ func simpleTerminalWidth() int {
 }
 
 func writeSimpleHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
-	left := "Benoid · " + providerName
+	left := "Benoit · " + providerName
 	fmt.Fprintln(writer, colors.style(left, colors.bold, colors.fgAccent))
 	if width > 0 {
 		hint := "Enter to send | Shift+Enter newline | /exit to quit"

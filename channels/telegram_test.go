@@ -25,19 +25,12 @@ func TestNewTelegramValidation(t *testing.T) {
 		t.Fatal("expected missing base URL error")
 	}
 
-	t.Setenv(TelegramAPIKeyEnv, "")
-	_, err = NewTelegramFromEnv(&http.Client{})
-	if err == nil {
-		t.Fatal("expected missing TELEGRAM_API_KEY error")
-	}
-
-	t.Setenv(TelegramAPIKeyEnv, "env-token")
-	client, err := NewTelegramFromEnv(&http.Client{})
+	client, err := NewTelegram("  env-token  ", &http.Client{})
 	if err != nil {
-		t.Fatalf("expected env constructor to succeed: %v", err)
+		t.Fatalf("expected constructor to succeed: %v", err)
 	}
 	if client.botToken != "env-token" {
-		t.Fatalf("unexpected bot token from env: %q", client.botToken)
+		t.Fatalf("unexpected trimmed bot token: %q", client.botToken)
 	}
 }
 

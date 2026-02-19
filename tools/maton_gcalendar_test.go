@@ -38,21 +38,19 @@ func (r *recordingDoer) Do(req *http.Request) (*http.Response, error) {
 }
 
 func TestMatonGCalendarToolRequiresAPIKey(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "")
-	tool := NewMatonGCalendarToolWithHTTPClient(&recordingDoer{})
+	tool := NewMatonGCalendarTool(nil)
 	out, err := tool.Call(context.Background(), map[string]any{"action": "list_calendars"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(out, "MATON_API_KEY is not set") {
+	if !strings.Contains(out, "maton client is not configured") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
 
 func TestMatonGCalendarToolListEvents(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"items":[{"id":"evt_1"}]}`}
-	tool := NewMatonGCalendarToolWithHTTPClient(doer)
+	tool := NewMatonGCalendarTool(newMatonToolClient(t, doer))
 
 	out, err := tool.Call(context.Background(), map[string]any{
 		"action":        "list_events",
@@ -93,9 +91,8 @@ func TestMatonGCalendarToolListEvents(t *testing.T) {
 }
 
 func TestMatonGCalendarToolCreateEvent(t *testing.T) {
-	t.Setenv(MatonAPIKeyEnv, "test-key")
 	doer := &recordingDoer{response: `{"id":"evt_1"}`}
-	tool := NewMatonGCalendarToolWithHTTPClient(doer)
+	tool := NewMatonGCalendarTool(newMatonToolClient(t, doer))
 
 	out, err := tool.Call(context.Background(), map[string]any{
 		"action":      "create_event",
@@ -130,7 +127,7 @@ func TestMatonGCalendarToolCreateEvent(t *testing.T) {
 }
 
 func TestMatonGCalendarToolInvalidAction(t *testing.T) {
-	tool := NewMatonGCalendarToolWithClient(&MatonClient{})
+	tool := NewMatonGCalendarTool(&MatonClient{})
 	out, err := tool.Call(context.Background(), map[string]any{"action": "bogus"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

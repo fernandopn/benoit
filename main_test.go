@@ -4,34 +4,68 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/fernandopn/benoid/tools"
+	"github.com/fernandopn/benoit/internal/app"
 )
 
-func TestSelectedTools(t *testing.T) {
-	t.Run("all tools", func(t *testing.T) {
-		selected, err := selectedTools(t.TempDir())
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
+func TestLoadCredentials(t *testing.T) {
+	t.Run("openai required", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "")
+		_, err := loadCredentials(app.ModeSimple)
+		if err == nil {
+			t.Fatal("expected missing OPENAI_API_KEY error")
 		}
-		names := toolNames(selected)
-		if len(names) != 8 {
-			t.Fatalf("expected 8 tools, got %d: %v", len(names), names)
-		}
-		expected := []string{"get_time", "code_interpreter", "web_search", "list_files", "get_current_directory", "maton_gcalendar", "maton_gmail", "read_file"}
-		for i, want := range expected {
-			if names[i] != want {
-				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
-			}
+		if !strings.Contains(err.Error(), openAIAPIKeyEnv) {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 
-	t.Run("filesystem tools require root", func(t *testing.T) {
-		_, err := selectedTools("")
+	t.Run("telegram required in telegram mode", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-key")
+		t.Setenv(telegramAPIKeyEnv, "")
+		_, err := loadCredentials(app.ModeTelegram)
 		if err == nil {
-			t.Fatal("expected restricted filesystem error")
+			t.Fatal("expected missing TELEGRAM_API_KEY error")
 		}
-		if !strings.Contains(err.Error(), "root cannot be empty") {
+		if !strings.Contains(err.Error(), telegramAPIKeyEnv) {
 			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("telegram optional outside telegram mode", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-key")
+		t.Setenv(telegramAPIKeyEnv, "")
+		t.Setenv(matonAPIKeyEnv, "")
+		creds, err := loadCredentials(app.ModeSimple)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.OpenAIAPIKey != "openai-key" {
+			t.Fatalf("unexpected OpenAI key: %q", creds.OpenAIAPIKey)
+		}
+		if creds.TelegramBotToken != "" {
+			t.Fatalf("expected empty telegram token, got %q", creds.TelegramBotToken)
+		}
+		if creds.MatonAPIKey != "" {
+			t.Fatalf("expected empty Maton key, got %q", creds.MatonAPIKey)
+		}
+	})
+
+	t.Run("trimmed values", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "  openai-key  ")
+		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
+		t.Setenv(matonAPIKeyEnv, "  maton-key  ")
+		creds, err := loadCredentials(app.ModeTelegram)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.OpenAIAPIKey != "openai-key" {
+			t.Fatalf("unexpected OpenAI key: %q", creds.OpenAIAPIKey)
+		}
+		if creds.TelegramBotToken != "telegram-key" {
+			t.Fatalf("unexpected telegram token: %q", creds.TelegramBotToken)
+		}
+		if creds.MatonAPIKey != "maton-key" {
+			t.Fatalf("unexpected Maton key: %q", creds.MatonAPIKey)
 		}
 	})
 }
@@ -40,14 +74,14 @@ func TestParseTUIMode(t *testing.T) {
 	tests := []struct {
 		name    string
 		raw     string
-		want    tuiMode
+		want    app.Mode
 		wantErr bool
 	}{
-		{name: "simple", raw: "simple", want: tuiModeSimple},
-		{name: "bubbletea", raw: "bubbletea", want: tuiModeBubbleTea},
-		{name: "telegram", raw: "telegram", want: tuiModeTelegram},
-		{name: "trimmed", raw: " bubbletea ", want: tuiModeBubbleTea},
-		{name: "case insensitive", raw: "SiMpLe", want: tuiModeSimple},
+		{name: "simple", raw: "simple", want: app.ModeSimple},
+		{name: "bubbletea", raw: "bubbletea", want: app.ModeBubbleTea},
+		{name: "telegram", raw: "telegram", want: app.ModeTelegram},
+		{name: "trimmed", raw: " bubbletea ", want: app.ModeBubbleTea},
+		{name: "case insensitive", raw: "SiMpLe", want: app.ModeSimple},
 		{name: "invalid", raw: "nope", wantErr: true},
 	}
 
@@ -70,10 +104,31 @@ func TestParseTUIMode(t *testing.T) {
 	}
 }
 
-func toolNames(tools []tools.Tool) []string {
-	names := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		names = append(names, tool.Name())
-	}
-	return names
+func TestParseTelegramAllowedUsers(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		ids, err := parseTelegramAllowedUsers("  ")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(ids) != 0 {
+			t.Fatalf("expected no IDs, got %v", ids)
+		}
+	})
+
+	t.Run("valid and deduplicated", func(t *testing.T) {
+		ids, err := parseTelegramAllowedUsers("77, 99, 77, 0")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(ids) != 2 || ids[0] != 77 || ids[1] != 99 {
+			t.Fatalf("unexpected IDs: %v", ids)
+		}
+	})
+
+	t.Run("invalid id", func(t *testing.T) {
+		_, err := parseTelegramAllowedUsers("77,abc")
+		if err == nil {
+			t.Fatal("expected parse error")
+		}
+	})
 }

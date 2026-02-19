@@ -9,8 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/fernandopn/benoid/channels"
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/channels"
+	"github.com/fernandopn/benoit/providers"
 	"golang.org/x/term"
 )
 
@@ -18,7 +18,7 @@ const telegramMaxMessageLength = 4096
 const telegramTypingInterval = 4 * time.Second
 const telegramTypingRequestTimeout = 4 * time.Second
 
-func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provider providers.Provider, timeout time.Duration, pollTimeoutSeconds int) error {
+func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provider providers.Provider, timeout time.Duration, pollTimeoutSeconds int, allowedUserIDs []int64) error {
 	if telegramClient == nil {
 		return errors.New("telegram client is required")
 	}
@@ -34,6 +34,7 @@ func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provide
 	width := simpleTerminalWidth()
 	writeTelegramHeader(writer, colors, provider.Name(), width)
 	writer.Flush()
+	allowedUsers := buildAllowedTelegramUsers(allowedUserIDs)
 
 	offset := int64(0)
 	for {
@@ -62,6 +63,9 @@ func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provide
 			if incoming.From != nil && incoming.From.IsBot {
 				continue
 			}
+			if !isTelegramUserAllowed(incoming, allowedUsers) {
+				continue
+			}
 			prompt := strings.TrimSpace(incoming.Text)
 			if prompt == "" {
 				continue
@@ -80,7 +84,8 @@ func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provide
 				close(typingDone)
 			}()
 
-			reply, err := runTelegramPromptWithOutput(ctx, provider, prompt, timeout, writer, colors, width)
+			sessionID := telegramSessionID(incoming)
+			reply, err := runTelegramPromptWithOutput(ctx, provider, prompt, timeout, sessionID, writer, colors, width)
 			stopTyping()
 			<-typingDone
 			if err != nil {
@@ -102,24 +107,39 @@ func RunTelegram(ctx context.Context, telegramClient *channels.Telegram, provide
 }
 
 func runTelegramPrompt(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration) (string, error) {
-	return runTelegramPromptWithOutput(ctx, provider, prompt, timeout, nil, simpleTheme{}, 0)
+	return runTelegramPromptWithOutput(ctx, provider, prompt, timeout, "", nil, simpleTheme{}, 0)
 }
 
-func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration, writer *bufio.Writer, colors simpleTheme, width int) (string, error) {
-	requestCtx := ctx
-	cancel := func() {}
-	if timeout > 0 {
-		requestCtx, cancel = context.WithTimeout(ctx, timeout)
+func buildAllowedTelegramUsers(ids []int64) map[int64]struct{} {
+	if len(ids) == 0 {
+		return nil
 	}
-	defer cancel()
+	allowed := make(map[int64]struct{}, len(ids))
+	for _, id := range ids {
+		if id == 0 {
+			continue
+		}
+		allowed[id] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return nil
+	}
+	return allowed
+}
 
-	msgs := provider.Chat(requestCtx, prompt)
-	var (
-		aggregated strings.Builder
-		chatErr    error
-		section    *providers.MsgType
-		pending    = map[string]pendingToolCall{}
-	)
+func isTelegramUserAllowed(message *channels.TelegramMessage, allowed map[int64]struct{}) bool {
+	if len(allowed) == 0 {
+		return true
+	}
+	if message == nil || message.From == nil || message.From.ID == 0 {
+		return false
+	}
+	_, ok := allowed[message.From.ID]
+	return ok
+}
+
+func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration, sessionID string, writer *bufio.Writer, colors simpleTheme, width int) (string, error) {
+	var section *providers.MsgType
 
 	switchState := func(next providers.MsgType) {
 		if writer == nil {
@@ -135,97 +155,58 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 		section = &tt
 	}
 
-	for msg := range msgs {
-		switch msg.Type {
-		case providers.MsgTypeChat:
-			switchState(msg.Type)
+	reply, err := streamPrompt(ctx, prompt, timeout, streamStartForProvider(provider, sessionID), streamCallbacks{
+		OnChat: func(value string) {
+			switchState(providers.MsgTypeChat)
 			if writer != nil {
-				fmt.Fprint(writer, colors.style(msg.Value, colors.fgStrong))
+				fmt.Fprint(writer, colors.style(value, colors.fgStrong))
 				writer.Flush()
 			}
-			aggregated.WriteString(msg.Value)
-		case providers.MsgTypeReasoningSummary:
-			switchState(msg.Type)
+		},
+		OnReasoning: func(value string) {
+			switchState(providers.MsgTypeReasoningSummary)
 			if writer != nil {
-				fmt.Fprint(writer, colors.style(msg.Value, colors.fgMuted, colors.dim))
+				fmt.Fprint(writer, colors.style(value, colors.fgMuted, colors.dim))
 				writer.Flush()
 			}
-		case providers.MsgTypeToolCall:
+		},
+		OnToolCall: func(name string, args string, callID string) {
+			_ = callID
 			switchState(providers.MsgTypeToolCall)
 			if writer != nil {
-				callID := strings.TrimSpace(msg.Metadata["call_id"])
-				name := strings.TrimSpace(msg.Metadata["tool"])
-				args := compactWhitespace(strings.TrimSpace(msg.Value))
-				if args == "" {
-					args = "{}"
-				}
-				if callID != "" {
-					pending[callID] = pendingToolCall{name: name, args: args}
-				}
 				writeSimpleToolCard(writer, colors, width, name, args, "Running...")
 				writer.Flush()
 			}
-		case providers.MsgTypeToolResult:
+		},
+		OnToolResult: func(name string, args string, output string, callID string) {
+			_ = callID
 			switchState(providers.MsgTypeToolResult)
 			if writer != nil {
-				callID := strings.TrimSpace(msg.Metadata["call_id"])
-				name := strings.TrimSpace(msg.Metadata["tool"])
-				args := "{}"
-				if callID != "" {
-					if call, ok := pending[callID]; ok {
-						if name == "" {
-							name = call.name
-						}
-						args = call.args
-						delete(pending, callID)
-					}
-				}
-				if args == "{}" {
-					if rawArgs := strings.TrimSpace(msg.Metadata["args"]); rawArgs != "" {
-						args = compactWhitespace(rawArgs)
-					}
-				}
-				output := strings.TrimSpace(msg.Value)
-				if output == "" {
-					output = "(empty output)"
-				}
 				writeSimpleToolCard(writer, colors, width, name, args, output)
 				writer.Flush()
 			}
-		case providers.MsgTypeContextUsage:
+		},
+		OnContextUsage: func(value string, metadata map[string]string) {
 			switchState(providers.MsgTypeContextUsage)
 			if writer != nil {
-				if left, ok := contextLeftPercent(msg.Value, msg.Metadata); ok {
+				if left, ok := contextLeftPercent(value, metadata); ok {
 					fmt.Fprintln(writer, colors.style(formatContextLeft(left), colors.fgAccent, colors.dim))
 					writer.Flush()
 				}
 			}
-		case providers.MsgTypeError:
-			if chatErr == nil {
-				errText := strings.TrimSpace(msg.Value)
-				if errText == "" {
-					errText = "provider returned an empty error"
-				}
-				chatErr = errors.New(errText)
-			}
+		},
+		OnError: func(errText string) {
 			if writer != nil {
-				fmt.Fprintln(os.Stderr, colors.style("request error:", colors.bold, colors.fgWarn), msg.Value)
+				fmt.Fprintln(os.Stderr, colors.style("request error:", colors.bold, colors.fgWarn), errText)
 			}
-		}
-	}
+		},
+	})
 	if writer != nil && section != nil {
 		fmt.Fprintln(writer)
 		writer.Flush()
 	}
-	if chatErr != nil {
-		return "", chatErr
-	}
-	if err := requestCtx.Err(); err != nil {
+	if err != nil {
 		return "", err
-	}
-	reply := aggregated.String()
-	if strings.TrimSpace(reply) == "" {
-		return "(empty response)", nil
 	}
 	return reply, nil
 }
@@ -281,8 +262,15 @@ func incomingTelegramMessage(update channels.TelegramUpdate) *channels.TelegramM
 	return nil
 }
 
+func telegramSessionID(message *channels.TelegramMessage) string {
+	if message == nil || message.Chat.ID == 0 {
+		return ""
+	}
+	return fmt.Sprintf("telegram:%d", message.Chat.ID)
+}
+
 func writeTelegramHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
-	left := "Benoid · " + providerName + " · Telegram"
+	left := "Benoit · " + providerName + " · Telegram"
 	fmt.Fprintln(writer, colors.style(left, colors.bold, colors.fgAccent))
 	if width > 0 {
 		hint := "Listening for Telegram messages | Ctrl+C to quit"
@@ -297,19 +285,15 @@ func writeTelegramIncoming(writer *bufio.Writer, colors simpleTheme, message *ch
 	}
 	sender := telegramSenderLabel(message)
 	senderID := telegramSenderID(message)
-	chat := telegramChatLabel(message)
 	text := strings.TrimSpace(message.Text)
 	if text == "" {
 		text = "(empty message)"
 	}
-	header := "from " + sender
+	header := sender
 	if senderID != "" {
 		header += " (id:" + senderID + ")"
 	}
-	if chat != "" {
-		header += " in " + chat
-	}
-	fmt.Fprintln(writer, colors.style(header+":", colors.bold, colors.fgAccent))
+	fmt.Fprintln(writer, colors.style(header, colors.bold, colors.fgAccent))
 	fmt.Fprintln(writer, colors.style(text, colors.fgUser))
 	fmt.Fprintln(writer)
 }
@@ -319,12 +303,12 @@ func telegramSenderLabel(message *channels.TelegramMessage) string {
 		return "unknown sender"
 	}
 	if message.From != nil {
-		if username := strings.TrimSpace(message.From.Username); username != "" {
-			return "@" + username
-		}
 		fullName := strings.TrimSpace(strings.TrimSpace(message.From.FirstName) + " " + strings.TrimSpace(message.From.LastName))
 		if fullName != "" {
 			return fullName
+		}
+		if username := strings.TrimSpace(message.From.Username); username != "" {
+			return "@" + username
 		}
 		if message.From.ID != 0 {
 			return fmt.Sprintf("user:%d", message.From.ID)
@@ -352,26 +336,6 @@ func telegramSenderID(message *channels.TelegramMessage) string {
 		return ""
 	}
 	return fmt.Sprintf("%d", message.From.ID)
-}
-
-func telegramChatLabel(message *channels.TelegramMessage) string {
-	if message == nil {
-		return ""
-	}
-	if username := strings.TrimSpace(message.Chat.Username); username != "" {
-		return "@" + username
-	}
-	if title := strings.TrimSpace(message.Chat.Title); title != "" {
-		return title
-	}
-	fullName := strings.TrimSpace(strings.TrimSpace(message.Chat.FirstName) + " " + strings.TrimSpace(message.Chat.LastName))
-	if fullName != "" {
-		return fullName
-	}
-	if message.Chat.ID != 0 {
-		return fmt.Sprintf("chat:%d", message.Chat.ID)
-	}
-	return ""
 }
 
 func runTelegramTypingLoop(ctx context.Context, telegramClient *channels.Telegram, chatID int64) {

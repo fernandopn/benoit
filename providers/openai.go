@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"sync"
 
-	"github.com/fernandopn/benoid/tools"
+	"github.com/fernandopn/benoit/tools"
 	"github.com/openai/openai-go/v3"
+	"github.com/openai/openai-go/v3/option"
 	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
@@ -32,8 +32,8 @@ type openAIClientAdapter struct {
 	client openai.Client
 }
 
-func newOpenAIClientAdapter() *openAIClientAdapter {
-	return &openAIClientAdapter{client: openai.NewClient()}
+func newOpenAIClientAdapter(apiKey string) *openAIClientAdapter {
+	return &openAIClientAdapter{client: openai.NewClient(option.WithAPIKey(apiKey))}
 }
 
 func (a *openAIClientAdapter) ListModels(ctx context.Context) ([]string, error) {
@@ -74,26 +74,51 @@ type OpenAIParams struct {
 	ReasoningSummary shared.ReasoningSummary
 }
 
+const defaultOpenAISessionID = "__default__"
+
 type openAIState struct {
-	mu         sync.Mutex
-	previousID string
+	mu                sync.Mutex
+	previousBySession map[string]string
 }
 
-func (s *openAIState) get() string {
+func newOpenAIState() *openAIState {
+	return &openAIState{previousBySession: map[string]string{}}
+}
+
+func normalizeSessionID(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return defaultOpenAISessionID
+	}
+	return sessionID
+}
+
+func (s *openAIState) get(sessionID string) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.previousID
+	if s.previousBySession == nil {
+		return ""
+	}
+	return s.previousBySession[normalizeSessionID(sessionID)]
 }
 
-func (s *openAIState) set(id string) {
+func (s *openAIState) set(sessionID string, id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
 	s.mu.Lock()
-	s.previousID = id
+	if s.previousBySession == nil {
+		s.previousBySession = map[string]string{}
+	}
+	s.previousBySession[normalizeSessionID(sessionID)] = id
 	s.mu.Unlock()
 }
 
-func newOpenAI(model string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
-	if _, ok := os.LookupEnv("OPENAI_API_KEY"); !ok {
-		return nil, fmt.Errorf("OPENAI_API_KEY is not set")
+func newOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
+	apiKey = strings.TrimSpace(apiKey)
+	if apiKey == "" {
+		return nil, fmt.Errorf("api key is required")
 	}
 	model = strings.TrimSpace(model)
 	if model == "" {
@@ -101,8 +126,8 @@ func newOpenAI(model string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI
 	}
 
 	provider := &OpenAI{
-		client:     newOpenAIClientAdapter(),
-		state:      &openAIState{},
+		client:     newOpenAIClientAdapter(apiKey),
+		state:      newOpenAIState(),
 		model:      model,
 		toolRunner: parallelToolRunner{},
 		params:     params,
@@ -300,8 +325,8 @@ func (b *OpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) {
 	}
 }
 
-func NewOpenAI(model string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
-	provider, err := newOpenAI(model, params, toolSet)
+func NewOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
+	provider, err := newOpenAI(model, apiKey, params, toolSet)
 	if err != nil {
 		return nil, err
 	}
@@ -309,12 +334,17 @@ func NewOpenAI(model string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI
 }
 
 func (s *OpenAI) Chat(ctx context.Context, input string) <-chan Msg {
+	return s.ChatInSession(ctx, input, "")
+}
+
+func (s *OpenAI) ChatInSession(ctx context.Context, input string, sessionID string) <-chan Msg {
 	out := make(chan Msg)
+	sessionID = normalizeSessionID(sessionID)
 
 	go func() {
 		defer close(out)
 
-		params := s.buildParams(input, s.state.get())
+		params := s.buildParams(input, s.state.get(sessionID))
 		for {
 			response, err := s.streamResponse(ctx, params, out)
 			if err != nil {
@@ -323,6 +353,9 @@ func (s *OpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 			}
 			if response == nil {
 				return
+			}
+			if response.ID != "" {
+				s.state.set(sessionID, response.ID)
 			}
 			toolOutputs, err := s.toolOutputsFromResponse(ctx, response, out)
 			if err != nil {
@@ -353,9 +386,6 @@ func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNe
 		}
 		if event.Type == "response.completed" {
 			completed = &event.Response
-			if event.Response.ID != "" {
-				s.state.set(event.Response.ID)
-			}
 		}
 	}
 	if err := stream.Err(); err != nil {

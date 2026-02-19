@@ -9,12 +9,10 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 )
 
 const TelegramAPIBaseURL = "https://api.telegram.org"
-const TelegramAPIKeyEnv = "TELEGRAM_API_KEY"
 
 type Telegram struct {
 	botToken   string
@@ -88,14 +86,6 @@ type getUpdatesRequest struct {
 
 func NewTelegram(botToken string, httpClient *http.Client) (*Telegram, error) {
 	return NewTelegramWithBaseURL(botToken, TelegramAPIBaseURL, httpClient)
-}
-
-func NewTelegramFromEnv(httpClient *http.Client) (*Telegram, error) {
-	botToken := strings.TrimSpace(os.Getenv(TelegramAPIKeyEnv))
-	if botToken == "" {
-		return nil, fmt.Errorf("%s is not set", TelegramAPIKeyEnv)
-	}
-	return NewTelegram(botToken, httpClient)
 }
 
 func NewTelegramWithBaseURL(botToken string, apiBaseURL string, httpClient *http.Client) (*Telegram, error) {

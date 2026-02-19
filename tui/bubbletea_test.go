@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/providers"
 )
 
 type simpleProvider struct{}

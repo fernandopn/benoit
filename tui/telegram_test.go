@@ -11,14 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/fernandopn/benoid/channels"
-	"github.com/fernandopn/benoid/providers"
+	"github.com/fernandopn/benoit/channels"
+	"github.com/fernandopn/benoit/providers"
 )
 
 type telegramProviderStub struct {
-	mu      sync.Mutex
-	inputs  []string
-	outputs []providers.Msg
+	mu       sync.Mutex
+	inputs   []string
+	sessions []string
+	outputs  []providers.Msg
 }
 
 func (p *telegramProviderStub) Chat(ctx context.Context, input string) <-chan providers.Msg {
@@ -49,6 +50,13 @@ func (p *telegramProviderStub) ListModels(ctx context.Context) ([]string, error)
 
 func (p *telegramProviderStub) Name() string {
 	return "telegram-provider"
+}
+
+func (p *telegramProviderStub) ChatInSession(ctx context.Context, input string, sessionID string) <-chan providers.Msg {
+	p.mu.Lock()
+	p.sessions = append(p.sessions, sessionID)
+	p.mu.Unlock()
+	return p.Chat(ctx, input)
 }
 
 func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
@@ -171,7 +179,7 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 		t.Fatalf("create telegram client: %v", err)
 	}
 
-	err = RunTelegram(ctx, telegramClient, provider, 2*time.Second, 0)
+	err = RunTelegram(ctx, telegramClient, provider, 2*time.Second, 0, []int64{77})
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected context.Canceled, got %v", err)
 	}
@@ -182,6 +190,9 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 	}
 	if provider.inputs[0] != "Who are you?" {
 		t.Fatalf("unexpected provider input: %q", provider.inputs[0])
+	}
+	if len(provider.sessions) != 1 || provider.sessions[0] != "telegram:99" {
+		t.Fatalf("unexpected provider session routing: %v", provider.sessions)
 	}
 	provider.mu.Unlock()
 
@@ -194,6 +205,114 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 	}
 	if typingCalls == 0 {
 		t.Fatal("expected at least one typing action")
+	}
+	mu.Unlock()
+}
+
+func TestRunTelegramIgnoresDisallowedUsers(t *testing.T) {
+	provider := &telegramProviderStub{outputs: []providers.Msg{
+		{Type: providers.MsgTypeChat, Value: "Should never send"},
+	}}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var (
+		mu           sync.Mutex
+		updatesCalls int
+		typingCalls  int
+		sentTexts    []string
+	)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		switch r.URL.Path {
+		case "/bottest-token/getUpdates":
+			mu.Lock()
+			updatesCalls++
+			call := updatesCalls
+			mu.Unlock()
+
+			if call == 1 {
+				response := map[string]any{
+					"ok": true,
+					"result": []map[string]any{
+						{
+							"update_id": 10,
+							"message": map[string]any{
+								"message_id": 20,
+								"text":       "Who are you?",
+								"chat": map[string]any{
+									"id":   99,
+									"type": "private",
+								},
+								"from": map[string]any{
+									"id":     999,
+									"is_bot": false,
+								},
+							},
+						},
+					},
+				}
+				if err := json.NewEncoder(w).Encode(response); err != nil {
+					t.Fatalf("encode getUpdates response: %v", err)
+				}
+				return
+			}
+
+			if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{}}); err != nil {
+				t.Fatalf("encode empty getUpdates response: %v", err)
+			}
+			cancel()
+		case "/bottest-token/sendMessage":
+			var payload struct {
+				Text string `json:"text"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+				t.Fatalf("decode sendMessage payload: %v", err)
+			}
+			mu.Lock()
+			sentTexts = append(sentTexts, payload.Text)
+			mu.Unlock()
+
+			if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": true}); err != nil {
+				t.Fatalf("encode sendMessage response: %v", err)
+			}
+		case "/bottest-token/sendChatAction":
+			mu.Lock()
+			typingCalls++
+			mu.Unlock()
+			if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": true}); err != nil {
+				t.Fatalf("encode sendChatAction response: %v", err)
+			}
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	telegramClient, err := channels.NewTelegramWithBaseURL("test-token", server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("create telegram client: %v", err)
+	}
+
+	err = RunTelegram(ctx, telegramClient, provider, 2*time.Second, 0, []int64{77})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected context.Canceled, got %v", err)
+	}
+
+	provider.mu.Lock()
+	if len(provider.inputs) != 0 {
+		t.Fatalf("expected no provider requests, got %d", len(provider.inputs))
+	}
+	provider.mu.Unlock()
+
+	mu.Lock()
+	if len(sentTexts) != 0 {
+		t.Fatalf("expected no replies, got %d", len(sentTexts))
+	}
+	if typingCalls != 0 {
+		t.Fatalf("expected no typing actions, got %d", typingCalls)
 	}
 	mu.Unlock()
 }

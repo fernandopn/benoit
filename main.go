@@ -4,184 +4,160 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/fernandopn/benoid/channels"
-	"github.com/fernandopn/benoid/middleware"
-	"github.com/fernandopn/benoid/providers"
-	"github.com/fernandopn/benoid/tools"
-	"github.com/fernandopn/benoid/tui"
+	"github.com/fernandopn/benoit/internal/app"
+	"github.com/fernandopn/benoit/providers"
 	"github.com/openai/openai-go/v3/shared"
 )
 
-func main() {
-	const OPENAI_REASONING_EFFORT = shared.ReasoningEffortHigh
-	const OPENAI_REASONING_SUMMARY = shared.ReasoningSummaryDetailed
-	const defaultTUIMode = "simple"
-	const defaultTelegramPollTimeoutSeconds = 30
+const (
+	openAIReasoningEffort             = shared.ReasoningEffortHigh
+	openAIReasoningSummary            = shared.ReasoningSummaryDetailed
+	defaultTUIMode                    = string(app.ModeSimple)
+	defaultTelegramPollTimeoutSeconds = 30
+	defaultTelegramAllowedUsers       = "8230557735"
 
-	defaultRoot, rootErr := os.Getwd()
-	if rootErr != nil {
-		fmt.Fprintln(os.Stderr, "filesystem init error:", rootErr)
+	openAIAPIKeyEnv   = "OPENAI_API_KEY"
+	telegramAPIKeyEnv = "TELEGRAM_API_KEY"
+	matonAPIKeyEnv    = "MATON_API_KEY"
+)
+
+func main() {
+	if err := run(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func run() error {
+	defaultRoot, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("filesystem init error: %w", err)
+	}
+
+	cfg, err := loadConfig(defaultRoot)
+	if err != nil {
+		return err
+	}
+
+	creds, err := loadCredentials(cfg.Mode)
+	if err != nil {
+		return err
+	}
+	cfg.Credentials = creds
+	cfg.OpenAIParams = providers.OpenAIParams{
+		ReasoningEffort:  openAIReasoningEffort,
+		ReasoningSummary: openAIReasoningSummary,
+	}
+
+	if err := app.Run(context.Background(), cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadConfig(defaultRoot string) (app.Config, error) {
 	model := flag.String("model", "gpt-5.2", "model name")
 	timeout := flag.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	dbPath := flag.String("db-path", "", "sqlite db path for chat logging")
 	tuiModeFlag := flag.String("tui", defaultTUIMode, "tui mode: simple, bubbletea, or telegram")
 	telegramPollTimeoutSeconds := flag.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
+	telegramAllowedUsersRaw := flag.String("telegram-allowed-users", defaultTelegramAllowedUsers, "comma-separated Telegram user IDs allowed in telegram mode")
 	flag.Parse()
 
-	var (
-		provider providers.Provider
-		mode     tuiMode
-		err      error
-	)
-	mode, err = parseTUIMode(*tuiModeFlag)
+	mode, err := parseTUIMode(*tuiModeFlag)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "flag error:", err)
-		os.Exit(1)
+		return app.Config{}, fmt.Errorf("flag error: %w", err)
 	}
 	if *telegramPollTimeoutSeconds < 0 {
-		fmt.Fprintln(os.Stderr, "flag error: -telegram-poll-timeout cannot be negative")
-		os.Exit(1)
+		return app.Config{}, fmt.Errorf("flag error: -telegram-poll-timeout cannot be negative")
 	}
-	openAIParams := providers.OpenAIParams{
-		ReasoningEffort:  OPENAI_REASONING_EFFORT,
-		ReasoningSummary: OPENAI_REASONING_SUMMARY,
-	}
-	initCtx, initCancel := context.WithTimeout(context.Background(), *timeout)
-	defer initCancel()
-
-	toolSet, err := selectedTools(*fsRoot)
+	allowedUsers, err := parseTelegramAllowedUsers(*telegramAllowedUsersRaw)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "tool config error:", err)
-		os.Exit(1)
-	}
-	provider, err = providers.NewOpenAI(*model, openAIParams, toolSet)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "provider init error:", err)
-		os.Exit(1)
+		return app.Config{}, fmt.Errorf("flag error: %w", err)
 	}
 
-	var closeMiddleware func() error
-	provider, closeMiddleware, err = middleware.ConfigureSQLiteSave(initCtx, provider, strings.TrimSpace(*dbPath))
-	if err != nil {
-		fmt.Fprintln(os.Stderr, "middleware init error:", err)
-		os.Exit(1)
-	}
-
-	tuiCtx := context.Background()
-	if mode == tuiModeTelegram {
-		telegramClient, err := channels.NewTelegramFromEnv(http.DefaultClient)
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "telegram init error:", err)
-			os.Exit(1)
-		}
-		if err := tui.RunTelegram(tuiCtx, telegramClient, provider, *timeout, *telegramPollTimeoutSeconds); err != nil {
-			fmt.Fprintln(os.Stderr, "telegram tui error:", err)
-			os.Exit(1)
-		}
-	} else {
-		useSimpleMode := mode == tuiModeSimple
-		if err := tui.Run(tuiCtx, provider, *timeout, useSimpleMode); err != nil {
-			fmt.Fprintln(os.Stderr, "tui error:", err)
-			os.Exit(1)
-		}
-	}
-	if closeMiddleware != nil {
-		if err := closeMiddleware(); err != nil {
-			fmt.Fprintln(os.Stderr, "middleware close error:", err)
-		}
-	}
+	return app.Config{
+		Model:                      strings.TrimSpace(*model),
+		Timeout:                    *timeout,
+		FSRoot:                     strings.TrimSpace(*fsRoot),
+		DBPath:                     strings.TrimSpace(*dbPath),
+		Mode:                       mode,
+		TelegramPollTimeoutSeconds: *telegramPollTimeoutSeconds,
+		TelegramAllowedUserIDs:     allowedUsers,
+	}, nil
 }
 
-func selectedTools(fsRoot string) ([]tools.Tool, error) {
-	type toolSpec struct {
-		factory    func(tools.FileSystem) tools.Tool
-		requiresFS bool
+func loadCredentials(mode app.Mode) (app.CredentialConfig, error) {
+	openAIAPIKey, err := requiredEnv(openAIAPIKeyEnv)
+	if err != nil {
+		return app.CredentialConfig{}, fmt.Errorf("credential error: %w", err)
 	}
-	allTools := []toolSpec{
-		// {
-		// 	factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewClockTool() },
-		// 	requiresFS: false,
-		// },
-		{
-			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewOpenAICodeInterpreterTool() },
-			requiresFS: false,
-		},
-		{
-			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewOpenAIWebSearchTool() },
-			requiresFS: false,
-		},
-		// {
-		// 	factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewListFilesToolWithFS(fs) },
-		// 	requiresFS: true,
-		// },
-		// {
-		// 	factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewCurrentDirectoryToolWithFS(fs) },
-		// 	requiresFS: true,
-		// },
-		{
-			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewMatonGCalendarTool() },
-			requiresFS: false,
-		},
-		{
-			factory:    func(_ tools.FileSystem) tools.Tool { return tools.NewMatonGmailTool() },
-			requiresFS: false,
-		},
-		// {
-		// 	factory:    func(fs tools.FileSystem) tools.Tool { return tools.NewReadFileToolWithFS(fs) },
-		// 	requiresFS: true,
-		// },
-	}
-
-	useFS := false
-	for _, spec := range allTools {
-		if spec.requiresFS {
-			useFS = true
-			break
-		}
-	}
-
-	var fs tools.FileSystem
-	if useFS {
-		resolvedFS, err := tools.NewRestrictedFS(strings.TrimSpace(fsRoot))
+	telegramBotToken := ""
+	if mode == app.ModeTelegram {
+		telegramBotToken, err = requiredEnv(telegramAPIKeyEnv)
 		if err != nil {
-			return nil, err
+			return app.CredentialConfig{}, fmt.Errorf("credential error: %w", err)
 		}
-		fs = resolvedFS
 	}
-
-	toolSet := make([]tools.Tool, 0, len(allTools))
-	for _, spec := range allTools {
-		toolSet = append(toolSet, spec.factory(fs))
-	}
-
-	return toolSet, nil
+	return app.CredentialConfig{
+		OpenAIAPIKey:     openAIAPIKey,
+		TelegramBotToken: telegramBotToken,
+		MatonAPIKey:      strings.TrimSpace(os.Getenv(matonAPIKeyEnv)),
+	}, nil
 }
 
-type tuiMode int
+func requiredEnv(name string) (string, error) {
+	value := strings.TrimSpace(os.Getenv(name))
+	if value == "" {
+		return "", fmt.Errorf("%s is not set", name)
+	}
+	return value, nil
+}
 
-const (
-	tuiModeSimple tuiMode = iota
-	tuiModeBubbleTea
-	tuiModeTelegram
-)
-
-func parseTUIMode(raw string) (tuiMode, error) {
+func parseTUIMode(raw string) (app.Mode, error) {
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "simple":
-		return tuiModeSimple, nil
-	case "bubbletea":
-		return tuiModeBubbleTea, nil
-	case "telegram":
-		return tuiModeTelegram, nil
+	case string(app.ModeSimple):
+		return app.ModeSimple, nil
+	case string(app.ModeBubbleTea):
+		return app.ModeBubbleTea, nil
+	case string(app.ModeTelegram):
+		return app.ModeTelegram, nil
 	default:
-		return tuiModeSimple, fmt.Errorf("invalid -tui value %q (use simple, bubbletea, or telegram)", raw)
+		return app.ModeSimple, fmt.Errorf("invalid -tui value %q (use simple, bubbletea, or telegram)", raw)
 	}
+}
+
+func parseTelegramAllowedUsers(raw string) ([]int64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	allowed := make([]int64, 0, len(parts))
+	seen := make(map[int64]struct{}, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		id, err := strconv.ParseInt(part, 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Telegram user ID %q", part)
+		}
+		if id == 0 {
+			continue
+		}
+		if _, exists := seen[id]; exists {
+			continue
+		}
+		seen[id] = struct{}{}
+		allowed = append(allowed, id)
+	}
+	return allowed, nil
 }
