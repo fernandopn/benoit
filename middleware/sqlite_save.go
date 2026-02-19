@@ -14,11 +14,12 @@ import (
 const sqliteSaveSchema = `
 CREATE TABLE IF NOT EXISTS messages (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	direction TEXT NOT NULL,
 	msg_type TEXT NOT NULL,
 	value TEXT NOT NULL,
 	metadata TEXT NOT NULL
 );`
+
+const middlewareMsgTypeInput = "input"
 
 type SQLiteSave struct {
 	provider providers.Provider
@@ -55,7 +56,81 @@ func NewSQLiteSave(ctx context.Context, provider providers.Provider, dbPath stri
 		}
 		return nil, err
 	}
+	if err := migrateSQLiteMessagesTable(ctx, db); err != nil {
+		if closeErr := db.Close(); closeErr != nil {
+			return nil, closeErr
+		}
+		return nil, err
+	}
 	return &SQLiteSave{provider: provider, db: db}, nil
+}
+
+func migrateSQLiteMessagesTable(ctx context.Context, db *sql.DB) error {
+	hasDirection, err := tableHasColumn(ctx, db, "messages", "direction")
+	if err != nil {
+		return err
+	}
+	if !hasDirection {
+		return nil
+	}
+
+	if _, err := db.ExecContext(ctx, "ALTER TABLE messages RENAME TO messages_old"); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, sqliteSaveSchema); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO messages (id, msg_type, value, metadata)
+		SELECT
+			id,
+			CASE
+				WHEN direction = 'sent' THEN ?
+				WHEN msg_type = 'chat' THEN 'chat_final'
+				WHEN msg_type = 'reasoning_summary' THEN 'reasoning_summary_final'
+				ELSE msg_type
+			END,
+			value,
+			metadata
+		FROM messages_old
+		ORDER BY id
+	`, middlewareMsgTypeInput); err != nil {
+		return err
+	}
+	if _, err := db.ExecContext(ctx, "DROP TABLE messages_old"); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func tableHasColumn(ctx context.Context, db *sql.DB, tableName string, columnName string) (bool, error) {
+	rows, err := db.QueryContext(ctx, "PRAGMA table_info("+tableName+")")
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var (
+			cid        int
+			name       string
+			columnType string
+			notNull    int
+			defaultVal sql.NullString
+			pk         int
+		)
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultVal, &pk); err != nil {
+			return false, err
+		}
+		if strings.EqualFold(name, columnName) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return false, nil
 }
 
 func (s *SQLiteSave) Chat(ctx context.Context, input string) <-chan providers.Msg {
@@ -83,41 +158,13 @@ func (s *SQLiteSave) chat(ctx context.Context, input string, start func() <-chan
 
 	go func() {
 		defer close(out)
-		var aggBuf strings.Builder
-		var aggType providers.MsgType
-		aggActive := false
-
-		flushAgg := func() {
-			if !aggActive || aggBuf.Len() == 0 {
-				aggActive = false
-				return
-			}
-			agg := providers.Msg{Type: aggType, Value: aggBuf.String()}
-			if err := s.storeReceived(ctx, agg); err != nil {
-				out <- storageErrorMsg("store_received", err)
-			}
-			aggBuf.Reset()
-			aggActive = false
-		}
 
 		for msg := range in {
 			out <- msg
-			if msg.Type == providers.MsgTypeChat || msg.Type == providers.MsgTypeReasoningSummary {
-				if !aggActive || aggType != msg.Type {
-					flushAgg()
-					aggType = msg.Type
-					aggActive = true
-				}
-				aggBuf.WriteString(msg.Value)
-				continue
-			}
-
-			flushAgg()
 			if err := s.storeReceived(ctx, msg); err != nil {
 				out <- storageErrorMsg("store_received", err)
 			}
 		}
-		flushAgg()
 	}()
 
 	return out
@@ -143,8 +190,8 @@ func (s *SQLiteSave) storeInput(ctx context.Context, input string) error {
 		return nil
 	}
 	metadata := "{}"
-	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (direction, msg_type, value, metadata) VALUES (?, ?, ?, ?)`,
-		"sent", msgTypeString(providers.MsgTypeChat), input, metadata)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (msg_type, value, metadata) VALUES (?, ?, ?)`,
+		middlewareMsgTypeInput, input, metadata)
 	return err
 }
 
@@ -158,17 +205,21 @@ func (s *SQLiteSave) storeReceived(ctx context.Context, msg providers.Msg) error
 			metadata = string(encoded)
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (direction, msg_type, value, metadata) VALUES (?, ?, ?, ?)`,
-		"received", msgTypeString(msg.Type), msg.Value, metadata)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (msg_type, value, metadata) VALUES (?, ?, ?)`,
+		msgTypeString(msg.Type), msg.Value, metadata)
 	return err
 }
 
 func msgTypeString(msgType providers.MsgType) string {
 	switch msgType {
-	case providers.MsgTypeChat:
-		return "chat"
-	case providers.MsgTypeReasoningSummary:
-		return "reasoning_summary"
+	case providers.MsgTypeChatDelta:
+		return "chat_delta"
+	case providers.MsgTypeChatFinal:
+		return "chat_final"
+	case providers.MsgTypeReasoningSummaryDelta:
+		return "reasoning_summary_delta"
+	case providers.MsgTypeReasoningSummaryFinal:
+		return "reasoning_summary_final"
 	case providers.MsgTypeError:
 		return "error"
 	case providers.MsgTypeToolCall:

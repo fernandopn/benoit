@@ -49,10 +49,16 @@ func readStreamChunk(ch <-chan providers.Msg, maxWait time.Duration, maxMsgs int
 func (m *model) applyStreamMessages(msgs []providers.Msg) {
 	for _, msg := range msgs {
 		switch msg.Type {
-		case providers.MsgTypeChat:
+		case providers.MsgTypeChatDelta:
 			m.appendToBlock(blockAssistant, msg.Value, nil)
-		case providers.MsgTypeReasoningSummary:
+		case providers.MsgTypeChatFinal:
+			// Final messages are emitted for consumers that need complete text.
+			// Bubble Tea already renders deltas incrementally.
+		case providers.MsgTypeReasoningSummaryDelta:
 			m.appendToBlock(blockReasoning, msg.Value, nil)
+		case providers.MsgTypeReasoningSummaryFinal:
+			// Final messages are emitted for consumers that need complete text.
+			// Bubble Tea already renders deltas incrementally.
 		case providers.MsgTypeToolCall:
 			m.appendToolCall(msg.Value, msg.Metadata)
 		case providers.MsgTypeToolResult:

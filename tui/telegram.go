@@ -166,14 +166,14 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 
 	reply, err := streamPrompt(ctx, prompt, timeout, streamStartForProvider(provider, sessionID), streamCallbacks{
 		OnChat: func(value string) {
-			switchState(providers.MsgTypeChat)
+			switchState(providers.MsgTypeChatDelta)
 			if writer != nil {
 				fmt.Fprint(writer, colors.style(value, colors.fgStrong))
 				writer.Flush()
 			}
 		},
 		OnReasoning: func(value string) {
-			switchState(providers.MsgTypeReasoningSummary)
+			switchState(providers.MsgTypeReasoningSummaryDelta)
 			if writer != nil {
 				fmt.Fprint(writer, colors.style(value, colors.fgMuted, colors.dim))
 				writer.Flush()

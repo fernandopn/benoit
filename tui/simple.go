@@ -84,12 +84,12 @@ func RunSimple(provider providers.Provider, timeout time.Duration) {
 
 		_, streamErr := streamPrompt(context.Background(), text, timeout, streamStartForProvider(provider, ""), streamCallbacks{
 			OnChat: func(value string) {
-				switchState(providers.MsgTypeChat)
+				switchState(providers.MsgTypeChatDelta)
 				fmt.Fprint(writer, colors.style(value, colors.fgStrong))
 				writer.Flush()
 			},
 			OnReasoning: func(value string) {
-				switchState(providers.MsgTypeReasoningSummary)
+				switchState(providers.MsgTypeReasoningSummaryDelta)
 				fmt.Fprint(writer, colors.style(value, colors.fgMuted, colors.dim))
 				writer.Flush()
 			},

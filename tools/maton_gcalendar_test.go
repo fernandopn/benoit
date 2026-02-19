@@ -57,6 +57,8 @@ func TestMatonGCalendarToolListEvents(t *testing.T) {
 		"calendar_id":   "primary",
 		"connection_id": "conn-123",
 		"query": map[string]any{
+			"timeMin":      "2026-02-18T00:00:00Z",
+			"timeMax":      "2026-02-19T00:00:00Z",
 			"maxResults":   float64(10),
 			"singleEvents": true,
 		},
@@ -85,7 +87,35 @@ func TestMatonGCalendarToolListEvents(t *testing.T) {
 	if got := doer.req.URL.Query().Get("singleEvents"); got != "true" {
 		t.Fatalf("unexpected singleEvents query value: %q", got)
 	}
+	if got := doer.req.URL.Query().Get("timeMin"); got != "2026-02-18T00:00:00Z" {
+		t.Fatalf("unexpected timeMin query value: %q", got)
+	}
+	if got := doer.req.URL.Query().Get("timeMax"); got != "2026-02-19T00:00:00Z" {
+		t.Fatalf("unexpected timeMax query value: %q", got)
+	}
 	if !strings.Contains(out, "\"items\"") {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestMatonGCalendarToolListEventsRequiresTimeRange(t *testing.T) {
+	doer := &recordingDoer{response: `{"items":[{"id":"evt_1"}]}`}
+	tool := NewMatonGCalendarTool(newMatonToolClient(t, doer))
+
+	out, err := tool.Call(context.Background(), map[string]any{
+		"action":      "list_events",
+		"calendar_id": "primary",
+		"query": map[string]any{
+			"maxResults": float64(10),
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if doer.req != nil {
+		t.Fatal("expected request to be blocked when time range is missing")
+	}
+	if !strings.Contains(out, "list_events requires query.timeMin and query.timeMax") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }

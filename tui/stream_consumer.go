@@ -49,20 +49,29 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 
 	msgs := start(requestCtx, prompt)
 	var (
-		aggregated strings.Builder
-		streamErr  error
-		pending    = map[string]pendingToolCall{}
+		chatDelta         strings.Builder
+		chatFinal         strings.Builder
+		reasoningHasDelta bool
+		streamErr         error
+		pending           = map[string]pendingToolCall{}
 	)
 
 	for msg := range msgs {
 		switch msg.Type {
-		case providers.MsgTypeChat:
-			aggregated.WriteString(msg.Value)
+		case providers.MsgTypeChatDelta:
+			chatDelta.WriteString(msg.Value)
 			if callbacks.OnChat != nil {
 				callbacks.OnChat(msg.Value)
 			}
-		case providers.MsgTypeReasoningSummary:
+		case providers.MsgTypeChatFinal:
+			chatFinal.WriteString(msg.Value)
+		case providers.MsgTypeReasoningSummaryDelta:
+			reasoningHasDelta = true
 			if callbacks.OnReasoning != nil {
+				callbacks.OnReasoning(msg.Value)
+			}
+		case providers.MsgTypeReasoningSummaryFinal:
+			if !reasoningHasDelta && callbacks.OnReasoning != nil {
 				callbacks.OnReasoning(msg.Value)
 			}
 		case providers.MsgTypeToolCall:
@@ -121,13 +130,17 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 		}
 	}
 
+	reply := chatFinal.String()
+	if strings.TrimSpace(reply) == "" {
+		reply = chatDelta.String()
+	}
+
 	if streamErr != nil {
-		return aggregated.String(), streamErr
+		return reply, streamErr
 	}
 	if err := requestCtx.Err(); err != nil {
-		return aggregated.String(), err
+		return reply, err
 	}
-	reply := aggregated.String()
 	if strings.TrimSpace(reply) == "" {
 		return "(empty response)", nil
 	}

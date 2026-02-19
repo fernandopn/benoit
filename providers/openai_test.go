@@ -58,6 +58,26 @@ func functionCallItemRawArgs(t *testing.T, name, callID, rawArgs string) respons
 	return item
 }
 
+func responseOutputItem(t *testing.T, raw string) responses.ResponseOutputItemUnion {
+	t.Helper()
+	var item responses.ResponseOutputItemUnion
+	if err := json.Unmarshal([]byte(raw), &item); err != nil {
+		t.Fatalf("unmarshal output item: %v", err)
+	}
+	return item
+}
+
+func receiveMsg(t *testing.T, ch <-chan Msg) Msg {
+	t.Helper()
+	select {
+	case msg := <-ch:
+		return msg
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for provider message")
+		return Msg{}
+	}
+}
+
 func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 	startCh := make(chan string, 2)
 	releaseA := make(chan struct{})
@@ -243,5 +263,38 @@ func TestOpenAIState(t *testing.T) {
 	}
 	if state.get("") != "abc" {
 		t.Fatalf("default session changed unexpectedly: %q", state.get(""))
+	}
+}
+
+func TestEmitFinalStreamMessagesUsesCompletedResponse(t *testing.T) {
+	resp := &responses.Response{Output: []responses.ResponseOutputItemUnion{
+		responseOutputItem(t, `{"type":"message","id":"msg_1","role":"assistant","status":"completed","content":[{"type":"output_text","text":"Hello from final"}]}`),
+		responseOutputItem(t, `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"reasoning final"}]}`),
+	}}
+
+	out := make(chan Msg, 4)
+	emitFinalStreamMessages(out, resp, "hello delta", "reasoning delta")
+
+	first := receiveMsg(t, out)
+	second := receiveMsg(t, out)
+	if first.Type != MsgTypeChatFinal || first.Value != "Hello from final" {
+		t.Fatalf("unexpected first final message: %#v", first)
+	}
+	if second.Type != MsgTypeReasoningSummaryFinal || second.Value != "reasoning final" {
+		t.Fatalf("unexpected second final message: %#v", second)
+	}
+}
+
+func TestEmitFinalStreamMessagesFallsBackToDeltas(t *testing.T) {
+	out := make(chan Msg, 4)
+	emitFinalStreamMessages(out, nil, "hello delta", "reasoning delta")
+
+	first := receiveMsg(t, out)
+	second := receiveMsg(t, out)
+	if first.Type != MsgTypeChatFinal || first.Value != "hello delta" {
+		t.Fatalf("unexpected first fallback final message: %#v", first)
+	}
+	if second.Type != MsgTypeReasoningSummaryFinal || second.Value != "reasoning delta" {
+		t.Fatalf("unexpected second fallback final message: %#v", second)
 	}
 }

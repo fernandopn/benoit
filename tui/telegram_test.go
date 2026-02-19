@@ -61,11 +61,12 @@ func (p *telegramProviderStub) ChatInSession(ctx context.Context, input string, 
 
 func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 	provider := &telegramProviderStub{outputs: []providers.Msg{
-		{Type: providers.MsgTypeReasoningSummary, Value: "internal"},
+		{Type: providers.MsgTypeReasoningSummaryDelta, Value: "internal"},
 		{Type: providers.MsgTypeToolCall, Value: `{"tool":"clock"}`},
 		{Type: providers.MsgTypeToolResult, Value: "2026-01-01T00:00:00Z"},
-		{Type: providers.MsgTypeChat, Value: "Hello"},
-		{Type: providers.MsgTypeChat, Value: " from bot"},
+		{Type: providers.MsgTypeChatDelta, Value: "Hello"},
+		{Type: providers.MsgTypeChatDelta, Value: " from bot"},
+		{Type: providers.MsgTypeChatFinal, Value: "Hello from bot"},
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -211,7 +212,7 @@ func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {
 
 func TestRunTelegramIgnoresDisallowedUsers(t *testing.T) {
 	provider := &telegramProviderStub{outputs: []providers.Msg{
-		{Type: providers.MsgTypeChat, Value: "Should never send"},
+		{Type: providers.MsgTypeChatFinal, Value: "Should never send"},
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())

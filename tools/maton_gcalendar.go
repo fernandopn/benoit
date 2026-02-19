@@ -36,7 +36,7 @@ func (m *MatonGCalendarTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        m.Name(),
-			Description: openai.String("Google Calendar via Maton. Actions: list/get calendars, list/get/create/update/patch/delete events, quick add, free/busy, and connection management."),
+			Description: openai.String("Google Calendar via Maton. Actions: list/get calendars, list/get/create/update/patch/delete events, quick add, free/busy, and connection management. For list_events, always pass query.timeMin and query.timeMax (RFC3339) to bound results."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -73,8 +73,18 @@ func (m *MatonGCalendarTool) Definition() responses.ToolUnionParam {
 						"description": "Maton connection ID (also used as Maton-Connection on gateway requests)",
 					},
 					"query": map[string]any{
-						"type":                 "object",
-						"description":          "Query parameters for the selected action",
+						"type":        "object",
+						"description": "Query parameters for the selected action. For list_events, include timeMin and timeMax (RFC3339).",
+						"properties": map[string]any{
+							"timeMin": map[string]any{
+								"type":        "string",
+								"description": "Start of time range for list_events in RFC3339 (inclusive)",
+							},
+							"timeMax": map[string]any{
+								"type":        "string",
+								"description": "End of time range for list_events in RFC3339 (exclusive)",
+							},
+						},
 						"additionalProperties": true,
 					},
 					"event": map[string]any{
@@ -186,6 +196,9 @@ func (m *MatonGCalendarTool) handleGetCalendar(ctx context.Context, client *Mato
 func (m *MatonGCalendarTool) handleListEvents(ctx context.Context, client *MatonClient, args map[string]any, query map[string]string, connectionID string) ([]byte, error) {
 	calendarID, err := requireStringArg(args, "calendar_id")
 	if err != nil {
+		return nil, err
+	}
+	if err := requireListEventsTimeRange(query); err != nil {
 		return nil, err
 	}
 	return client.GatewayJSON(ctx, http.MethodGet, m.calendarPath("calendars", url.PathEscape(calendarID), "events"), query, nil, connectionID)
@@ -347,4 +360,13 @@ func (m *MatonGCalendarTool) requireCalendarEventAndBody(args map[string]any) (s
 
 func fmtUnsupportedAction(action string) error {
 	return errors.New("unsupported action: " + action)
+}
+
+func requireListEventsTimeRange(query map[string]string) error {
+	timeMin := strings.TrimSpace(query["timeMin"])
+	timeMax := strings.TrimSpace(query["timeMax"])
+	if timeMin == "" || timeMax == "" {
+		return errors.New("list_events requires query.timeMin and query.timeMax (RFC3339)")
+	}
+	return nil
 }

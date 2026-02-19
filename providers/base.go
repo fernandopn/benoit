@@ -5,8 +5,10 @@ import "context"
 type MsgType int
 
 const (
-	MsgTypeChat MsgType = iota
-	MsgTypeReasoningSummary
+	MsgTypeChatDelta MsgType = iota
+	MsgTypeChatFinal
+	MsgTypeReasoningSummaryDelta
+	MsgTypeReasoningSummaryFinal
 	MsgTypeError
 	MsgTypeToolCall
 	MsgTypeToolResult

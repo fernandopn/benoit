@@ -375,14 +375,21 @@ func (s *OpenAI) ChatInSession(ctx context.Context, input string, sessionID stri
 
 func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
 	stream := s.client.NewStreamingResponse(ctx, params)
-	var completed *responses.Response
+	var (
+		completed      *responses.Response
+		chatDelta      strings.Builder
+		reasoningDelta strings.Builder
+	)
+
 	for stream.Next() {
 		event := stream.Current()
 		if event.Type == "response.output_text.delta" && event.Delta != "" {
-			out <- Msg{Type: MsgTypeChat, Value: event.Delta}
+			out <- Msg{Type: MsgTypeChatDelta, Value: event.Delta}
+			chatDelta.WriteString(event.Delta)
 		}
 		if event.Type == "response.reasoning_summary_text.delta" && event.Delta != "" {
-			out <- Msg{Type: MsgTypeReasoningSummary, Value: event.Delta}
+			out <- Msg{Type: MsgTypeReasoningSummaryDelta, Value: event.Delta}
+			reasoningDelta.WriteString(event.Delta)
 		}
 		if event.Type == "response.completed" {
 			completed = &event.Response
@@ -391,5 +398,48 @@ func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNe
 	if err := stream.Err(); err != nil {
 		return completed, err
 	}
+
+	emitFinalStreamMessages(out, completed, chatDelta.String(), reasoningDelta.String())
 	return completed, nil
+}
+
+func emitFinalStreamMessages(out chan<- Msg, completed *responses.Response, chatDelta string, reasoningDelta string) {
+	emitFinalMessage(out, MsgTypeChatFinal, responseChatText(completed), chatDelta)
+	emitFinalMessage(out, MsgTypeReasoningSummaryFinal, responseReasoningSummaryText(completed), reasoningDelta)
+}
+
+func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fallback string) {
+	value := explicit
+	if strings.TrimSpace(value) == "" {
+		value = fallback
+	}
+	if strings.TrimSpace(value) == "" {
+		return
+	}
+	out <- Msg{Type: messageType, Value: value}
+}
+
+func responseChatText(resp *responses.Response) string {
+	if resp == nil {
+		return ""
+	}
+	return resp.OutputText()
+}
+
+func responseReasoningSummaryText(resp *responses.Response) string {
+	if resp == nil || len(resp.Output) == 0 {
+		return ""
+	}
+
+	var summary strings.Builder
+	for _, item := range resp.Output {
+		if item.Type != "reasoning" {
+			continue
+		}
+		reasoning := item.AsReasoning()
+		for _, part := range reasoning.Summary {
+			summary.WriteString(part.Text)
+		}
+	}
+	return summary.String()
 }

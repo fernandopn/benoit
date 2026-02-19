@@ -40,6 +40,7 @@ official Go SDK.
 - Credentials are loaded in `main.go` during startup (`OPENAI_API_KEY`, optional `MATON_API_KEY`, and `TELEGRAM_API_KEY` when `-tui telegram`).
 - Tools always enabled: `code_interpreter`, `web_search`.
 - `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
+- `maton_gcalendar` `list_events` requires `query.timeMin` and `query.timeMax` (RFC3339) to keep event queries bounded.
 - When no TTY is detected for stdin/stdout, the app automatically uses
   simple line-based behavior.
 - Storage errors are surfaced into the chat stream as `MsgTypeError` events
