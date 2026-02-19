@@ -364,3 +364,176 @@ func TestToChannelMessageDisplayNameFallback(t *testing.T) {
 		t.Fatalf("unexpected display_name param: %q", channelMessage.Params[ParamDisplayName])
 	}
 }
+
+func TestSendMessageTypingFalseSkipsTelegramRequest(t *testing.T) {
+	var calls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": true}); err != nil {
+			t.Fatalf("encode response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewTelegramWithBaseURL("bot-token", server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("new telegram client: %v", err)
+	}
+
+	err = client.SendMessage(context.Background(), ChannelMessage{UserID: 77, Type: TypingEvent, Typing: false})
+	if err != nil {
+		t.Fatalf("send typing false: %v", err)
+	}
+	if calls != 0 {
+		t.Fatalf("expected no telegram API calls, got %d", calls)
+	}
+}
+
+func TestListenReceivesEditedMessageAndChannelPost(t *testing.T) {
+	var updateCalls int
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/botbot-token/getUpdates" {
+			t.Fatalf("unexpected path: %s", r.URL.Path)
+		}
+
+		updateCalls++
+		if updateCalls == 1 {
+			response := map[string]any{
+				"ok": true,
+				"result": []map[string]any{
+					{
+						"update_id": 1001,
+						"edited_message": map[string]any{
+							"message_id": 77,
+							"text":       "edited ping",
+							"chat": map[string]any{
+								"id":   42,
+								"type": "private",
+							},
+							"from": map[string]any{
+								"id":       77,
+								"is_bot":   false,
+								"username": "alice",
+							},
+						},
+					},
+					{
+						"update_id": 1002,
+						"channel_post": map[string]any{
+							"message_id": 88,
+							"text":       "channel ping",
+							"chat": map[string]any{
+								"id":    -100,
+								"type":  "channel",
+								"title": "Benoit updates",
+							},
+						},
+					},
+				},
+			}
+			if err := json.NewEncoder(w).Encode(response); err != nil {
+				t.Fatalf("encode response: %v", err)
+			}
+			return
+		}
+
+		if err := json.NewEncoder(w).Encode(map[string]any{"ok": true, "result": []any{}}); err != nil {
+			t.Fatalf("encode empty response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewTelegramWithBaseURL("bot-token", server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("new telegram client: %v", err)
+	}
+
+	receive := make(chan ChannelMessage, 2)
+	if err := client.RegisterReceiveMessageChan(receive); err != nil {
+		t.Fatalf("register receive channel: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- client.Listen(ctx, 0)
+	}()
+
+	waitMessage := func(name string) ChannelMessage {
+		t.Helper()
+		select {
+		case message := <-receive:
+			return message
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for %s", name)
+			return ChannelMessage{}
+		}
+	}
+
+	edited := waitMessage("edited message")
+	channelPost := waitMessage("channel post")
+
+	cancel()
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context canceled error, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for listen to stop")
+	}
+
+	if edited.Text != "edited ping" {
+		t.Fatalf("unexpected edited text: %q", edited.Text)
+	}
+	if edited.UserID != 77 {
+		t.Fatalf("unexpected edited user id: %d", edited.UserID)
+	}
+	if edited.Params[ParamUsername] != "alice" {
+		t.Fatalf("unexpected edited username param: %q", edited.Params[ParamUsername])
+	}
+	if edited.Params[ParamDisplayName] != "@alice" {
+		t.Fatalf("unexpected edited display_name param: %q", edited.Params[ParamDisplayName])
+	}
+
+	if channelPost.Text != "channel ping" {
+		t.Fatalf("unexpected channel post text: %q", channelPost.Text)
+	}
+	if channelPost.UserID != -100 {
+		t.Fatalf("unexpected channel post user id: %d", channelPost.UserID)
+	}
+	if channelPost.Params[ParamDisplayName] != "Benoit updates" {
+		t.Fatalf("unexpected channel post display_name param: %q", channelPost.Params[ParamDisplayName])
+	}
+}
+
+func TestTelegramAPIErrorsWithNonJSONResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		if _, err := w.Write([]byte("upstream unavailable")); err != nil {
+			t.Fatalf("write response: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewTelegramWithBaseURL("bot-token", server.URL, server.Client())
+	if err != nil {
+		t.Fatalf("new telegram client: %v", err)
+	}
+
+	err = client.SendMessage(context.Background(), ChannelMessage{Text: "hello", UserID: 99, Type: TextMessage})
+	if err == nil {
+		t.Fatal("expected API error")
+	}
+
+	var apiErr *TelegramAPIError
+	if !errors.As(err, &apiErr) {
+		t.Fatalf("expected TelegramAPIError, got %T", err)
+	}
+	if apiErr.StatusCode != http.StatusBadGateway {
+		t.Fatalf("unexpected status code: %d", apiErr.StatusCode)
+	}
+	if apiErr.Description != "upstream unavailable" {
+		t.Fatalf("unexpected description: %q", apiErr.Description)
+	}
+}
