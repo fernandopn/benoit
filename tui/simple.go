@@ -11,6 +11,7 @@ import (
 
 	"github.com/fernandopn/benoit/providers"
 	simpleui "github.com/fernandopn/benoit/tui/simple"
+	tuiutils "github.com/fernandopn/benoit/tui/utils"
 	"golang.org/x/term"
 )
 
@@ -95,7 +96,7 @@ func RunSimple(provider providers.Provider, timeout time.Duration) {
 			},
 			OnContextUsage: func(value string, metadata map[string]string) {
 				switchState(providers.MsgTypeContextUsage)
-				if left, ok := contextLeftPercent(value, metadata); ok {
+				if left, ok := tuiutils.ContextLeftPercent(value, metadata); ok {
 					fmt.Fprintln(writer, colors.Style(formatContextLeft(left), colors.FGAccent, colors.Dim))
 				}
 				writer.Flush()

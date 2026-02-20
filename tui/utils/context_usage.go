@@ -1,11 +1,11 @@
-package tui
+package utils
 
 import (
 	"strconv"
 	"strings"
 )
 
-func contextLeftPercent(value string, meta map[string]string) (float64, bool) {
+func ContextLeftPercent(value string, meta map[string]string) (float64, bool) {
 	if percentUsed, ok := parsePercent(value); ok {
 		return 100 - percentUsed, true
 	}

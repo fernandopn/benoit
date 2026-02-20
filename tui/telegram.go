@@ -12,6 +12,7 @@ import (
 	"github.com/fernandopn/benoit/channels"
 	"github.com/fernandopn/benoit/providers"
 	simpleui "github.com/fernandopn/benoit/tui/simple"
+	tuiutils "github.com/fernandopn/benoit/tui/utils"
 	"golang.org/x/term"
 )
 
@@ -195,7 +196,7 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 		OnContextUsage: func(value string, metadata map[string]string) {
 			switchState(providers.MsgTypeContextUsage)
 			if writer != nil {
-				if left, ok := contextLeftPercent(value, metadata); ok {
+				if left, ok := tuiutils.ContextLeftPercent(value, metadata); ok {
 					fmt.Fprintln(writer, colors.Style(formatContextLeft(left), colors.FGAccent, colors.Dim))
 					writer.Flush()
 				}

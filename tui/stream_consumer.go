@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/providers"
+	tuiutils "github.com/fernandopn/benoit/tui/utils"
 )
 
 type streamStarter func(context.Context, string) <-chan providers.Msg
@@ -77,7 +78,7 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 		case providers.MsgTypeToolCall:
 			callID := strings.TrimSpace(msg.Metadata["call_id"])
 			name := strings.TrimSpace(msg.Metadata["tool"])
-			args := compactWhitespace(strings.TrimSpace(msg.Value))
+			args := tuiutils.CompactWhitespace(strings.TrimSpace(msg.Value))
 			if args == "" {
 				args = "{}"
 			}
@@ -102,7 +103,7 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 			}
 			if args == "{}" {
 				if rawArgs := strings.TrimSpace(msg.Metadata["args"]); rawArgs != "" {
-					args = compactWhitespace(rawArgs)
+					args = tuiutils.CompactWhitespace(rawArgs)
 				}
 			}
 			output := strings.TrimSpace(msg.Value)

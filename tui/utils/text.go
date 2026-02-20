@@ -1,8 +1,8 @@
-package tui
+package utils
 
 import "strings"
 
-func compactWhitespace(value string) string {
+func CompactWhitespace(value string) string {
 	if value == "" {
 		return ""
 	}
