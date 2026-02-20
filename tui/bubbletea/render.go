@@ -1,4 +1,4 @@
-package tui
+package bubbletea
 
 import (
 	"strings"
@@ -10,11 +10,23 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func (m *model) refreshTranscript() {
+	content, targets := m.renderTranscriptWithTargets()
+	m.toolExpandTargets = targets
+	m.vp.SetContent(content)
+}
+
 func (m model) renderTranscript() string {
+	content, _ := m.renderTranscriptWithTargets()
+	return content
+}
+
+func (m model) renderTranscriptWithTargets() (string, []toolExpandTarget) {
 	var b strings.Builder
 	rendered := 0
-	for _, block := range m.blocks {
-		segment := m.renderBlock(block)
+	expandableBlocks := make([]int, 0)
+	for i := range m.blocks {
+		segment, expandable := m.renderBlock(m.blocks[i])
 		if strings.TrimSpace(segment) == "" {
 			continue
 		}
@@ -22,37 +34,78 @@ func (m model) renderTranscript() string {
 			b.WriteString("\n\n")
 		}
 		b.WriteString(segment)
+		if expandable {
+			expandableBlocks = append(expandableBlocks, i)
+		}
 		rendered++
 	}
 	content := strings.TrimSpace(b.String())
 	if m.vp.Width > 0 {
-		return lipgloss.NewStyle().Width(m.vp.Width).Render(content)
+		content = lipgloss.NewStyle().Width(m.vp.Width).Render(content)
 	}
-	return content
+	return content, locateToolExpandTargets(content, expandableBlocks)
 }
 
-func (m model) renderBlock(b block) string {
+func locateToolExpandTargets(content string, blockIndexes []int) []toolExpandTarget {
+	if len(blockIndexes) == 0 || strings.TrimSpace(content) == "" {
+		return nil
+	}
+
+	lines := strings.Split(content, "\n")
+	targets := make([]toolExpandTarget, 0, len(blockIndexes))
+	blockPos := 0
+
+	for lineIndex, line := range lines {
+		if blockPos >= len(blockIndexes) {
+			break
+		}
+
+		plain := ansi.Strip(line)
+		searchFrom := 0
+		for blockPos < len(blockIndexes) && searchFrom <= len(plain) {
+			rel := strings.Index(plain[searchFrom:], toolResultExpandLabel)
+			if rel < 0 {
+				break
+			}
+			idx := searchFrom + rel
+			colStart := ansi.StringWidth(plain[:idx])
+			colEnd := colStart + ansi.StringWidth(toolResultExpandLabel)
+			targets = append(targets, toolExpandTarget{
+				BlockIndex: blockIndexes[blockPos],
+				Line:       lineIndex,
+				ColStart:   colStart,
+				ColEnd:     colEnd,
+			})
+			blockPos++
+			searchFrom = idx + len(toolResultExpandLabel)
+		}
+	}
+
+	return targets
+}
+
+func (m model) renderBlock(b block) (string, bool) {
 	switch b.Kind {
 	case blockUser:
-		return m.renderUserBlock(b.Text)
+		return m.renderUserBlock(b.Text), false
 	case blockAssistant:
-		return renderMarkdown(b.Text, m.assistantMarkdownRender)
+		return renderMarkdown(b.Text, m.assistantMarkdownRender), false
 	case blockReasoning:
-		return renderMarkdown(b.Text, m.reasoningMarkdownRender)
+		return renderMarkdown(b.Text, m.reasoningMarkdownRender), false
 	case blockToolCall:
-		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args")
+		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args"), false
 	case blockToolResult:
-		return renderToolBlock(m.toolLabelStyle.Render("Tool Result"), b.Meta, b.Text, "output")
+		return renderToolBlock(m.toolLabelStyle.Render("Tool Result"), b.Meta, b.Text, "output"), false
 	case blockToolWidget:
 		return m.renderToolWidget(b)
 	case blockContext:
-		return m.contextLabelStyle.Render("Context Usage") + "\n" + m.contextTextStyle.Render(formatContextUsage(b.Text, b.Meta))
+		return m.contextLabelStyle.Render("Context Usage") + "\n" + m.contextTextStyle.Render(formatContextUsage(b.Text, b.Meta)), false
 	case blockError:
-		return m.errorLabelStyle.Render("Error") + "\n" + m.errorTextStyle.Render(b.Text)
+		return m.errorLabelStyle.Render("Error") + "\n" + m.errorTextStyle.Render(b.Text), false
 	case blockSystem:
-		return m.systemTextStyle.Render(b.Text)
+		return m.systemTextStyle.Render(b.Text), false
 	default:
-		return b.Text
+		return b.Text, false
 	}
 }
 
@@ -99,7 +152,7 @@ func (m model) renderUserBlock(text string) string {
 	return strings.Join(out, "\n")
 }
 
-func (m model) renderToolWidget(b block) string {
+func (m model) renderToolWidget(b block) (string, bool) {
 	width := m.vp.Width
 	if width <= 0 {
 		width = 80
@@ -123,12 +176,17 @@ func (m model) renderToolWidget(b block) string {
 
 	args := compactWhitespace(strings.TrimSpace(b.ToolArgs))
 	result := strings.TrimSpace(b.ToolResult)
+	expandable := false
 
 	if args == "" {
 		args = "{}"
 	}
 	if result == "" {
 		result = m.toolSpinnerLabel()
+	} else if !b.ToolResultExpanded {
+		preview, truncated := truncateLines(result, toolResultPreviewLines)
+		result = preview
+		expandable = truncated
 	}
 
 	header := m.toolNameStyle.Render(toolName) + " (" + m.toolBodyStyle.Render(args) + ")"
@@ -136,9 +194,26 @@ func (m model) renderToolWidget(b block) string {
 		header,
 		m.toolBodyStyle.Render(result),
 	}
+	if expandable {
+		bodyLines = append(bodyLines, m.toolExpandStyle.Render(toolResultExpandLabel))
+	}
 	body := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(bodyLines, "\n"))
 
-	return m.toolBoxStyle.Width(boxWidth).Render(body)
+	return m.toolBoxStyle.Width(boxWidth).Render(body), expandable
+}
+
+func truncateLines(value string, maxLines int) (string, bool) {
+	if maxLines < 1 {
+		return "", strings.TrimSpace(value) != ""
+	}
+	if value == "" {
+		return "", false
+	}
+	lines := strings.Split(value, "\n")
+	if len(lines) <= maxLines {
+		return value, false
+	}
+	return strings.Join(lines[:maxLines], "\n"), true
 }
 
 func (m model) toolSpinnerLabel() string {

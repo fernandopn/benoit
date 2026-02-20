@@ -1,7 +1,8 @@
-package tui
+package bubbletea
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"time"
 
@@ -9,10 +10,19 @@ import (
 	"github.com/fernandopn/benoit/providers"
 )
 
-func startStream(ctx context.Context, provider providers.Provider, prompt string, timeout time.Duration, seq int) tea.Cmd {
+func startStream(ctx context.Context, starter StreamStarter, prompt string, seq int) tea.Cmd {
 	return func() tea.Msg {
-		reqCtx, cancel := context.WithTimeout(ctx, timeout)
-		ch := provider.Chat(reqCtx, prompt)
+		ch, cancel, err := starter(ctx, prompt)
+		if cancel == nil {
+			cancel = func() {}
+		}
+		if err != nil {
+			return streamStartFailedMsg{Seq: seq, Err: err, Cancel: cancel}
+		}
+		if ch == nil {
+			cancel()
+			return streamStartFailedMsg{Seq: seq, Err: errors.New("start stream callback returned nil channel")}
+		}
 		return streamStartedMsg{Seq: seq, Ch: ch, Cancel: cancel}
 	}
 }

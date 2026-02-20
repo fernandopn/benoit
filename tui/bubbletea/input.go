@@ -1,4 +1,4 @@
-package tui
+package bubbletea
 
 import (
 	"fmt"
@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 )
 
@@ -127,80 +126,74 @@ func decodeUnknownCSI(msg tea.Msg) (string, bool) {
 	return string(bytes), true
 }
 
-func (m *model) updateContextUsage(value string, meta map[string]string) {
-	left, ok := contextLeftPercent(value, meta)
+func (m *model) expandToolResultAt(mouse tea.MouseMsg) bool {
+	if mouse.Button != tea.MouseButtonLeft {
+		return false
+	}
+	if mouse.Action != tea.MouseActionPress && mouse.Action != tea.MouseActionRelease {
+		return false
+	}
+
+	line, col, ok := m.transcriptCoordinateFromMouse(mouse.X, mouse.Y)
 	if !ok {
-		return
+		return false
 	}
-	if left < 0 {
-		left = 0
-	}
-	if left > 100 {
-		left = 100
-	}
-	if left >= 99.95 {
-		m.contextLeft = "100% context left"
-		return
-	}
-	m.contextLeft = fmt.Sprintf("%.1f%% context left", left)
-}
 
-func contextLeftPercent(value string, meta map[string]string) (float64, bool) {
-	if percentUsed, ok := parsePercent(value); ok {
-		return 100 - percentUsed, true
-	}
-	if meta != nil {
-		used, usedOK := parseFloatLoose(meta["tokens_used"])
-		avail, availOK := parseFloatLoose(meta["tokens_available"])
-		if usedOK && availOK {
-			if avail <= 0 {
-				return 0, false
-			}
-			if avail < used {
-				total := used + avail
-				if total > 0 {
-					return (avail / total) * 100, true
-				}
-			}
-			return ((avail - used) / avail) * 100, true
+	for _, target := range m.toolExpandTargets {
+		if target.Line != line {
+			continue
 		}
+		if col < target.ColStart || col >= target.ColEnd {
+			continue
+		}
+		if target.BlockIndex < 0 || target.BlockIndex >= len(m.blocks) {
+			return false
+		}
+		if m.blocks[target.BlockIndex].Kind != blockToolWidget {
+			return false
+		}
+		if m.blocks[target.BlockIndex].ToolResultExpanded {
+			return false
+		}
+		m.blocks[target.BlockIndex].ToolResultExpanded = true
+		return true
 	}
-	return 0, false
+
+	return false
 }
 
-func parseFloatLoose(value string) (float64, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, false
+func (m model) transcriptCoordinateFromMouse(mouseX, mouseY int) (int, int, bool) {
+	startX, startY := m.viewportContentOrigin()
+	if mouseX < startX || mouseY < startY {
+		return 0, 0, false
 	}
-	value = strings.ReplaceAll(value, ",", "")
-	num, err := strconv.ParseFloat(value, 64)
-	if err != nil {
-		return 0, false
+	row := mouseY - startY
+	if row < 0 || row >= m.vp.Height {
+		return 0, 0, false
 	}
-	return num, true
+	col := mouseX - startX
+	if col < 0 {
+		return 0, 0, false
+	}
+	return m.vp.YOffset + row, col, true
 }
 
-func parsePercent(value string) (float64, bool) {
-	value = strings.TrimSpace(value)
-	value = strings.TrimSuffix(value, "%")
-	if value == "" {
-		return 0, false
-	}
-	return parseFloatLoose(value)
-}
-
-func (m model) footerLine() string {
+func (m model) viewportContentOrigin() (int, int) {
 	width := max(0, m.width)
-	if m.contextLeft == "" {
-		return strings.Repeat(" ", width)
+	header := m.headerStyle.Width(width).Render(m.headerLine())
+	subHeader := m.subHeaderStyle.Width(width).Render(m.subHeaderLine())
+	prefixLines := countLines(header) + countLines(subHeader) + 1
+
+	startX := m.bodyStyle.GetMarginLeft() + m.bodyStyle.GetBorderLeftSize() + m.bodyStyle.GetPaddingLeft()
+	startY := prefixLines + m.bodyStyle.GetMarginTop() + m.bodyStyle.GetBorderTopSize() + m.bodyStyle.GetPaddingTop()
+	return startX, startY
+}
+
+func countLines(value string) int {
+	if value == "" {
+		return 1
 	}
-	text := m.contextLeftStyle.Render(m.contextLeft)
-	pad := width - lipgloss.Width(text)
-	if pad < 0 {
-		pad = 0
-	}
-	return strings.Repeat(" ", pad) + text
+	return strings.Count(value, "\n") + 1
 }
 
 func (m *model) adjustInputHeight() {
@@ -253,7 +246,7 @@ func (m *model) relayout(followBottom bool) {
 	m.updateMarkdownRenderers()
 
 	wasAtBottom := m.vp.AtBottom()
-	m.vp.SetContent(m.renderTranscript())
+	m.refreshTranscript()
 	if followBottom || wasAtBottom {
 		m.vp.GotoBottom()
 	}
