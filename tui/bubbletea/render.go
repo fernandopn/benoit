@@ -1,6 +1,8 @@
 package bubbletea
 
 import (
+	"bytes"
+	"encoding/json"
 	"strings"
 
 	"github.com/charmbracelet/glamour"
@@ -89,24 +91,56 @@ func (m model) renderBlock(b block) (string, bool) {
 	case blockUser:
 		return m.renderUserBlock(b.Text), false
 	case blockAssistant:
-		return renderMarkdown(b.Text, m.assistantMarkdownRender), false
+		return m.renderAssistantBlock(b.Text), false
 	case blockReasoning:
-		return renderMarkdown(b.Text, m.reasoningMarkdownRender), false
+		return m.renderReasoningBlock(b.Text), false
 	case blockToolCall:
-		return renderToolBlock(m.toolLabelStyle.Render("Tool Call"), b.Meta, b.Text, "args"), false
+		return m.renderToolWidget(block{
+			Kind:      blockToolWidget,
+			Meta:      cloneMeta(b.Meta),
+			ToolArgs:  b.Text,
+			ToolState: toolExecutionPending,
+		})
 	case blockToolResult:
-		return renderToolBlock(m.toolLabelStyle.Render("Tool Result"), b.Meta, b.Text, "output"), false
+		return m.renderToolWidget(block{
+			Kind:       blockToolWidget,
+			Meta:       cloneMeta(b.Meta),
+			ToolResult: b.Text,
+			ToolState:  toolExecutionDone,
+		})
 	case blockToolWidget:
 		return m.renderToolWidget(b)
 	case blockContext:
-		return m.contextLabelStyle.Render("Context Usage") + "\n" + m.contextTextStyle.Render(formatContextUsage(b.Text, b.Meta)), false
+		return m.contextTextStyle.Render(formatContextUsage(b.Text, b.Meta)), false
 	case blockError:
-		return m.errorLabelStyle.Render("Error") + "\n" + m.errorTextStyle.Render(b.Text), false
+		return m.renderErrorBlock(b.Text), false
 	case blockSystem:
 		return m.systemTextStyle.Render(b.Text), false
 	default:
 		return b.Text, false
 	}
+}
+
+func (m model) renderAssistantBlock(text string) string {
+	return m.renderCard(renderMarkdown(text, m.assistantMarkdownRender), m.assistantCardStyle)
+}
+
+func (m model) renderReasoningBlock(text string) string {
+	return m.renderCard(renderMarkdown(text, m.reasoningMarkdownRender), m.reasoningCardStyle)
+}
+
+func (m model) renderErrorBlock(text string) string {
+	return m.renderCard(m.errorTextStyle.Render(strings.TrimSpace(text)), m.errorCardStyle)
+}
+
+func (m model) renderCard(content string, style lipgloss.Style) string {
+	if strings.TrimSpace(content) == "" {
+		return ""
+	}
+	if m.vp.Width > 0 {
+		style = style.Width(m.vp.Width)
+	}
+	return style.Render(content)
 }
 
 func (m model) renderUserBlock(text string) string {
@@ -161,45 +195,71 @@ func (m model) renderToolWidget(b block) (string, bool) {
 	if boxWidth > 2 {
 		boxWidth = width - 2
 	}
-	contentWidth := boxWidth - 2
+	frameW, _ := m.toolBoxStyle.GetFrameSize()
+	contentWidth := boxWidth - frameW
 	if contentWidth < 1 {
 		contentWidth = 1
 	}
 
 	toolName := ""
+	callID := ""
 	if b.Meta != nil {
 		toolName = b.Meta["tool"]
+		callID = b.Meta["call_id"]
 	}
 	if toolName == "" {
 		toolName = "tool"
 	}
 
-	args := compactWhitespace(strings.TrimSpace(b.ToolArgs))
+	args := formatToolArgs(strings.TrimSpace(b.ToolArgs))
 	result := strings.TrimSpace(b.ToolResult)
 	expandable := false
+	hasResult := result != ""
 
-	if args == "" {
-		args = "{}"
+	state := b.ToolState
+	if hasResult && state == toolExecutionPending {
+		state = toolExecutionDone
 	}
+
 	if result == "" {
-		result = m.toolSpinnerLabel()
+		result = m.toolPendingStyle.Render(m.toolSpinnerLabel())
 	} else if !b.ToolResultExpanded {
 		preview, truncated := truncateLines(result, toolResultPreviewLines)
 		result = preview
 		expandable = truncated
 	}
 
-	header := m.toolNameStyle.Render(toolName) + " (" + m.toolBodyStyle.Render(args) + ")"
+	cardStyle := m.toolBoxStyle
+	switch state {
+	case toolExecutionDone:
+		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#3E5A45"))
+	case toolExecutionError:
+		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#9E4D4D"))
+	default:
+		cardStyle = cardStyle.Copy().BorderForeground(lipgloss.Color("#446189"))
+	}
+
+	metaLine := m.toolNameStyle.Render(toolName)
+	if callID != "" {
+		metaLine += " " + m.toolMetaStyle.Render(callID)
+	}
+	metaLine = lipgloss.NewStyle().Width(contentWidth).Render(metaLine)
+	requestBody := m.toolRequestStyle.Width(contentWidth).Render(args)
+	responseBody := m.toolResponseStyle.Width(contentWidth).Render(result)
+	divider := m.toolDividerStyle.Render(strings.Repeat("-", contentWidth))
+
 	bodyLines := []string{
-		header,
-		m.toolBodyStyle.Render(result),
+		metaLine,
+		requestBody,
+		divider,
+		responseBody,
 	}
 	if expandable {
 		bodyLines = append(bodyLines, m.toolExpandStyle.Render(toolResultExpandLabel))
 	}
 	body := lipgloss.NewStyle().Width(contentWidth).Render(strings.Join(bodyLines, "\n"))
 
-	return m.toolBoxStyle.Width(boxWidth).Render(body), expandable
+	return cardStyle.Width(boxWidth).Render(body), expandable
 }
 
 func truncateLines(value string, maxLines int) (string, bool) {
@@ -229,6 +289,26 @@ func compactWhitespace(value string) string {
 		return ""
 	}
 	return strings.Join(strings.Fields(value), " ")
+}
+
+func formatToolArgs(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "{}"
+	}
+	if !json.Valid([]byte(value)) {
+		return compactWhitespace(value)
+	}
+
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, []byte(value), "", "  "); err != nil {
+		return compactWhitespace(value)
+	}
+	out := strings.TrimSpace(buf.String())
+	if out == "" {
+		return "{}"
+	}
+	return out
 }
 
 func assistantMarkdownStyleConfig() glamouransi.StyleConfig {
@@ -285,7 +365,14 @@ func applyPrimitive(target *glamouransi.StylePrimitive, color *string, italic bo
 }
 
 func (m *model) updateMarkdownRenderers() {
-	width := m.vp.Width
+	assistantFrameW, _ := m.assistantCardStyle.GetFrameSize()
+	reasoningFrameW, _ := m.reasoningCardStyle.GetFrameSize()
+	frameW := assistantFrameW
+	if reasoningFrameW > frameW {
+		frameW = reasoningFrameW
+	}
+
+	width := m.vp.Width - frameW
 	if width <= 0 {
 		width = 80
 	}

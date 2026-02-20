@@ -39,15 +39,19 @@ type model struct {
 	inputBoxStyle  lipgloss.Style
 	inputBgStyle   lipgloss.Style
 
-	userTextStyle     lipgloss.Style
-	toolLabelStyle    lipgloss.Style
-	contextLabelStyle lipgloss.Style
-	errorLabelStyle   lipgloss.Style
-	toolBoxStyle      lipgloss.Style
-	toolKeyStyle      lipgloss.Style
-	toolBodyStyle     lipgloss.Style
-	toolNameStyle     lipgloss.Style
-	toolExpandStyle   lipgloss.Style
+	userTextStyle      lipgloss.Style
+	assistantCardStyle lipgloss.Style
+	reasoningCardStyle lipgloss.Style
+	errorCardStyle     lipgloss.Style
+	toolBoxStyle       lipgloss.Style
+	toolBodyStyle      lipgloss.Style
+	toolNameStyle      lipgloss.Style
+	toolMetaStyle      lipgloss.Style
+	toolRequestStyle   lipgloss.Style
+	toolResponseStyle  lipgloss.Style
+	toolDividerStyle   lipgloss.Style
+	toolExpandStyle    lipgloss.Style
+	toolPendingStyle   lipgloss.Style
 
 	systemTextStyle         lipgloss.Style
 	contextTextStyle        lipgloss.Style
@@ -58,8 +62,10 @@ type model struct {
 	reasoningMarkdownRender *glamour.TermRenderer
 	markdownWidth           int
 
-	contextLeft      string
-	contextLeftStyle lipgloss.Style
+	contextLeftPercent float64
+	contextLeftKnown   bool
+	contextTokensUsed  string
+	contextTokensTotal string
 
 	toolSpinnerFrames []string
 	toolSpinnerIndex  int
@@ -123,21 +129,49 @@ func newModel(ctx context.Context, cfg Config) model {
 
 	inputBg := lipgloss.NewStyle().
 		Background(inputBgColor)
+	assistantCard := lipgloss.NewStyle().
+		Padding(0, 1).
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#364150"))
+	reasoningCard := lipgloss.NewStyle().
+		Padding(0, 1).
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(lipgloss.Color("#2C3440"))
+	errorCard := lipgloss.NewStyle().
+		Padding(0, 1).
+		BorderLeft(true).
+		BorderStyle(lipgloss.NormalBorder()).
+		BorderForeground(warn)
 
 	toolBox := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(lipgloss.Color("#3A4452"))
-	toolKey := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#8FB3FF")).
-		Bold(true)
 	toolBody := lipgloss.NewStyle().
 		Foreground(muted)
-	toolName := toolKey.Copy().
+	toolName := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#A7BDD9")).
 		Bold(false).
 		Italic(true)
+	toolMeta := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#7F8FA6"))
+	toolRequest := lipgloss.NewStyle().
+		Background(lipgloss.Color("#1E2A3A")).
+		Foreground(lipgloss.Color("#C8D8F0")).
+		Padding(0, 1)
+	toolResponse := lipgloss.NewStyle().
+		Background(lipgloss.Color("#141A23")).
+		Foreground(lipgloss.Color("#B7C3D3")).
+		Padding(0, 1)
+	toolDivider := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#344153"))
 	toolExpand := lipgloss.NewStyle().
 		Foreground(lipgloss.Color("#8FB3FF")).
 		Underline(true)
+	toolPending := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#8FB3FF")).
+		Italic(true)
 
 	assistantMarkdownStyle := assistantMarkdownStyleConfig()
 	reasoningMarkdownStyle := reasoningMarkdownStyleConfig(muted)
@@ -163,20 +197,18 @@ func newModel(ctx context.Context, cfg Config) model {
 		userTextStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(userForegroundColor)).
 			Background(inputBgColor),
-		toolLabelStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#9CB6FF")).
-			Bold(true),
-		contextLabelStyle: lipgloss.NewStyle().
-			Foreground(muted).
-			Bold(true),
-		errorLabelStyle: lipgloss.NewStyle().
-			Foreground(warn).
-			Bold(true),
-		toolBoxStyle:    toolBox,
-		toolKeyStyle:    toolKey,
-		toolBodyStyle:   toolBody,
-		toolNameStyle:   toolName,
-		toolExpandStyle: toolExpand,
+		assistantCardStyle: assistantCard,
+		reasoningCardStyle: reasoningCard,
+		errorCardStyle:     errorCard,
+		toolBoxStyle:       toolBox,
+		toolBodyStyle:      toolBody,
+		toolNameStyle:      toolName,
+		toolMetaStyle:      toolMeta,
+		toolRequestStyle:   toolRequest,
+		toolResponseStyle:  toolResponse,
+		toolDividerStyle:   toolDivider,
+		toolExpandStyle:    toolExpand,
+		toolPendingStyle:   toolPending,
 		systemTextStyle: lipgloss.NewStyle().
 			Foreground(lipgloss.Color("#7F8DA3")).
 			Italic(true),
@@ -184,9 +216,6 @@ func newModel(ctx context.Context, cfg Config) model {
 			Foreground(muted),
 		errorTextStyle: lipgloss.NewStyle().
 			Foreground(warn),
-		contextLeftStyle: lipgloss.NewStyle().
-			Foreground(lipgloss.Color("#8FB3FF")).
-			Bold(true),
 		assistantMarkdownStyle: assistantMarkdownStyle,
 		reasoningMarkdownStyle: reasoningMarkdownStyle,
 		toolSpinnerFrames:      []string{"|", "/", "-", "\\"},

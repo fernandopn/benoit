@@ -76,7 +76,12 @@ func (m *model) applyStreamMessages(msgs []providers.Msg) {
 		case providers.MsgTypeContextUsage:
 			m.updateContextUsage(msg.Value, msg.Metadata)
 		case providers.MsgTypeError:
-			m.appendBlock(blockError, msg.Value, msg.Metadata)
+			errText := strings.TrimSpace(msg.Value)
+			if errText == "" {
+				errText = "provider error"
+			}
+			m.markPendingToolsAsError(errText)
+			m.appendBlock(blockError, errText, msg.Metadata)
 			m.streaming = false
 			m.cancelStreamIfAny()
 		}
@@ -110,19 +115,22 @@ func (m *model) appendToolCall(text string, meta map[string]string) {
 	if callID != "" {
 		if idx, ok := m.toolBlockIndex[callID]; ok && idx >= 0 && idx < len(m.blocks) {
 			block := &m.blocks[idx]
-			if block.Kind != blockToolWidget {
+			if block.Kind == blockToolWidget {
+				block.ToolArgs += text
+				ensureToolMeta(block, callID, toolName)
+				if block.ToolState != toolExecutionError && strings.TrimSpace(block.ToolResult) == "" {
+					block.ToolState = toolExecutionPending
+				}
 				return
 			}
-			block.ToolArgs += text
-			ensureToolMeta(block, callID, toolName)
-			return
 		}
 	}
 
 	newBlock := block{
-		Kind:     blockToolWidget,
-		Meta:     cloneMeta(meta),
-		ToolArgs: text,
+		Kind:      blockToolWidget,
+		Meta:      cloneMeta(meta),
+		ToolArgs:  text,
+		ToolState: toolExecutionPending,
 	}
 	if callID != "" {
 		ensureToolMeta(&newBlock, callID, toolName)
@@ -142,12 +150,12 @@ func (m *model) appendToolResult(text string, meta map[string]string) {
 	if callID != "" {
 		if idx, ok := m.toolBlockIndex[callID]; ok && idx >= 0 && idx < len(m.blocks) {
 			block := &m.blocks[idx]
-			if block.Kind != blockToolWidget {
+			if block.Kind == blockToolWidget {
+				block.ToolResult += text
+				ensureToolMeta(block, callID, toolName)
+				block.ToolState = toolExecutionDone
 				return
 			}
-			block.ToolResult += text
-			ensureToolMeta(block, callID, toolName)
-			return
 		}
 	}
 
@@ -155,6 +163,7 @@ func (m *model) appendToolResult(text string, meta map[string]string) {
 		Kind:       blockToolWidget,
 		Meta:       cloneMeta(meta),
 		ToolResult: text,
+		ToolState:  toolExecutionDone,
 	}
 	if callID != "" {
 		ensureToolMeta(&newBlock, callID, toolName)
@@ -181,6 +190,22 @@ func (m *model) appendBlock(kind blockKind, text string, meta map[string]string)
 		Text: text,
 		Meta: cloneMeta(meta),
 	})
+}
+
+func (m *model) markPendingToolsAsError(errText string) {
+	errText = strings.TrimSpace(errText)
+	for i := range m.blocks {
+		if m.blocks[i].Kind != blockToolWidget {
+			continue
+		}
+		if m.blocks[i].ToolState != toolExecutionPending {
+			continue
+		}
+		m.blocks[i].ToolState = toolExecutionError
+		if strings.TrimSpace(m.blocks[i].ToolResult) == "" && errText != "" {
+			m.blocks[i].ToolResult = errText
+		}
+	}
 }
 
 func compatibleMeta(kind blockKind, current, incoming map[string]string) bool {
@@ -212,7 +237,7 @@ func (m *model) hasPendingToolResults() bool {
 		if m.blocks[i].Kind != blockToolWidget {
 			continue
 		}
-		if strings.TrimSpace(m.blocks[i].ToolResult) == "" {
+		if m.blocks[i].ToolState == toolExecutionPending && strings.TrimSpace(m.blocks[i].ToolResult) == "" {
 			return true
 		}
 	}

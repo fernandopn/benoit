@@ -11,7 +11,7 @@ const (
 	userBackgroundColor    = "#1C1C1C"
 	userForegroundColor    = "#E6EDF3"
 	toolResultPreviewLines = 4
-	toolResultExpandLabel  = "[click here to expand]"
+	toolResultExpandLabel  = "[expand]"
 )
 
 const (
@@ -55,8 +55,17 @@ type block struct {
 	Meta               map[string]string
 	ToolArgs           string
 	ToolResult         string
+	ToolState          toolExecutionState
 	ToolResultExpanded bool
 }
+
+type toolExecutionState int
+
+const (
+	toolExecutionPending toolExecutionState = iota
+	toolExecutionDone
+	toolExecutionError
+)
 
 type toolExpandTarget struct {
 	BlockIndex int

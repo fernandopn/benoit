@@ -46,6 +46,9 @@ func TestRenderToolWidgetCollapsesResult(t *testing.T) {
 	if strings.Contains(plain, "line-5") {
 		t.Fatalf("expected collapsed render to hide lines after %d", toolResultPreviewLines)
 	}
+	if strings.Contains(plain, "REQUEST") || strings.Contains(plain, "RESPONSE") {
+		t.Fatalf("expected tool widget render to avoid explicit request/response headers")
+	}
 
 	renderedExpanded, stillExpandable := m.renderToolWidget(block{
 		Kind:               blockToolWidget,
