@@ -12,26 +12,28 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/fernandopn/benoit/channels"
+	simpleui "github.com/fernandopn/benoit/tui/simple"
 	"golang.org/x/term"
 )
 
 const (
 	telegramPollTimeoutSeconds = 30
 	typingEventInterval        = 5 * time.Second
+	telegramAPIKeyEnv          = "TELEGRAM_API_KEY"
 )
 
 var (
 	errUnexpectedPositionalArgs = errors.New("unexpected positional arguments")
-	errTelegramTokenRequired    = errors.New("-telegram-token is required")
+	errTelegramTokenRequired    = errors.New("-telegram-token or TELEGRAM_API_KEY is required")
 	errInteractiveRequiresTTY   = errors.New("interactive mode requires a terminal")
 	errIncomingChannelClosed    = errors.New("incoming message channel closed")
 )
+
+type simpleTheme = simpleui.Theme
 
 type inputEventType int
 
@@ -91,7 +93,7 @@ func main() {
 
 func runChannelTUI(args []string) error {
 	flagSet := flag.NewFlagSet("channels-tui", flag.ContinueOnError)
-	telegramToken := flagSet.String("telegram-token", "", "telegram bot token")
+	telegramToken := flagSet.String("telegram-token", "", "telegram bot token (overrides TELEGRAM_API_KEY)")
 	verbose := flagSet.Bool("v", false, "verbose debug output")
 	if err := flagSet.Parse(args); err != nil {
 		return err
@@ -100,7 +102,16 @@ func runChannelTUI(args []string) error {
 		return errUnexpectedPositionalArgs
 	}
 
-	token := strings.TrimSpace(*telegramToken)
+	token := strings.TrimSpace(os.Getenv(telegramAPIKeyEnv))
+	telegramTokenFlagSet := false
+	flagSet.Visit(func(current *flag.Flag) {
+		if current.Name == "telegram-token" {
+			telegramTokenFlagSet = true
+		}
+	})
+	if telegramTokenFlagSet {
+		token = strings.TrimSpace(*telegramToken)
+	}
 	if token == "" {
 		return errTelegramTokenRequired
 	}
@@ -170,16 +181,16 @@ func (s *interactiveSession) run() error {
 	defer s.stopTypingIfNeeded()
 
 	writeChannelHeader(s.writer, s.colors, s.width)
-	printLine(s.writer, s.colors, "Waiting for incoming messages to discover recipients...", s.colors.dim, s.colors.fgMuted)
+	printLine(s.writer, s.colors, "Waiting for incoming messages to discover recipients...", s.colors.Dim, s.colors.FGMuted)
 	debugLine(s.writer, s.colors, s.verbose, "verbose mode enabled")
-	printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+	printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 	renderPrompt(s.writer, s.colors, s.chat)
 
 	for {
 		select {
 		case <-s.ctx.Done():
 			debugLine(s.writer, s.colors, s.verbose, "context canceled")
-			printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+			printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 			return nil
 		case err := <-s.listenErr:
 			if handled, stop := s.handleListenErr(err); stop {
@@ -204,7 +215,7 @@ func (s *interactiveSession) run() error {
 func (s *interactiveSession) handleListenErr(err error) (error, bool) {
 	debugLine(s.writer, s.colors, s.verbose, "listen returned err=%v", err)
 	if err == nil || errors.Is(err, context.Canceled) {
-		printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+		printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 		return nil, true
 	}
 	return err, true
@@ -227,8 +238,8 @@ func (s *interactiveSession) handleIncomingMessage(message channels.ChannelMessa
 		return nil
 	}
 
-	username := channelMessageUsername(message)
-	displayName := channelMessageDisplayName(message)
+	username := simpleui.ChannelMessageUsername(message)
+	displayName := simpleui.ChannelMessageDisplayName(message)
 	if username == "" {
 		debugLine(s.writer, s.colors, s.verbose, "username not found in params for user_id=%d", message.UserID)
 	} else {
@@ -250,20 +261,20 @@ func (s *interactiveSession) handleIncomingMessage(message channels.ChannelMessa
 
 func (s *interactiveSession) handleInputEvent(event inputEvent, ok bool) (bool, error) {
 	if !ok {
-		printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+		printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 		return true, nil
 	}
 
 	switch event.typeID {
 	case inputEventError:
 		if errors.Is(event.err, io.EOF) {
-			printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+			printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 			return true, nil
 		}
 		return false, event.err
 	case inputEventQuit, inputEventEOF:
 		debugLine(s.writer, s.colors, s.verbose, "input requested exit")
-		printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+		printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 		return true, nil
 	case inputEventTab:
 		s.handleTab()
@@ -286,7 +297,7 @@ func (s *interactiveSession) handleInputEvent(event inputEvent, ok bool) (bool, 
 
 func (s *interactiveSession) handleTab() {
 	if !s.chat.cycleRecipient() {
-		printLine(s.writer, s.colors, "No recipients yet", s.colors.fgWarn)
+		printLine(s.writer, s.colors, "No recipients yet", s.colors.FGWarn)
 		debugLine(s.writer, s.colors, s.verbose, "tab pressed with no recipients")
 	} else {
 		debugLine(s.writer, s.colors, s.verbose, "tab switched to recipient=%d display=%q", s.chat.currentRecipient(), s.chat.recipientDisplay(s.chat.currentRecipient()))
@@ -305,13 +316,13 @@ func (s *interactiveSession) handleEnter() (bool, error) {
 		return false, nil
 	}
 	if line == "/exit" || line == "/quit" {
-		printLine(s.writer, s.colors, "", s.colors.dim, s.colors.fgMuted)
+		printLine(s.writer, s.colors, "", s.colors.Dim, s.colors.FGMuted)
 		return true, nil
 	}
 
 	recipient := s.chat.currentRecipient()
 	if recipient == 0 {
-		printLine(s.writer, s.colors, "No recipient selected yet. Wait for an incoming message.", s.colors.fgWarn)
+		printLine(s.writer, s.colors, "No recipient selected yet. Wait for an incoming message.", s.colors.FGWarn)
 		debugLine(s.writer, s.colors, s.verbose, "send blocked: no current recipient")
 		renderPrompt(s.writer, s.colors, s.chat)
 		return false, nil
@@ -320,7 +331,7 @@ func (s *interactiveSession) handleEnter() (bool, error) {
 	debugLine(s.writer, s.colors, s.verbose, "sending message to recipient=%d display=%q text=%q", recipient, s.chat.recipientDisplay(recipient), line)
 	err := s.channel.SendMessage(s.ctx, channels.ChannelMessage{UserID: recipient, Type: channels.TextMessage, Text: line})
 	if err != nil {
-		printLine(s.writer, s.colors, "Send error: "+err.Error(), s.colors.bold, s.colors.fgWarn)
+		printLine(s.writer, s.colors, "Send error: "+err.Error(), s.colors.Bold, s.colors.FGWarn)
 		debugLine(s.writer, s.colors, s.verbose, "send failed: %v", err)
 		renderPrompt(s.writer, s.colors, s.chat)
 		return false, nil
@@ -405,7 +416,7 @@ func debugLine(writer *bufio.Writer, colors simpleTheme, enabled bool, format st
 	if !enabled {
 		return
 	}
-	printLine(writer, colors, "[debug] "+fmt.Sprintf(format, args...), colors.dim, colors.fgMuted)
+	printLine(writer, colors, "[debug] "+fmt.Sprintf(format, args...), colors.Dim, colors.FGMuted)
 }
 
 func sendTypingEvent(ctx context.Context, channel channels.Channel, userID int64, typing bool) error {
@@ -437,72 +448,18 @@ func readInputEvents(reader *bufio.Reader, out chan<- inputEvent) {
 		case 0x08, 0x7f:
 			out <- inputEvent{typeID: inputEventBackspace}
 		case 0x1b:
-			discardEscapeSequence(reader)
+			simpleui.DiscardEscapeSequence(reader)
 		default:
 			if b < 0x20 {
 				continue
 			}
-			r, err := decodeRuneFromFirstByte(reader, b)
+			r, err := simpleui.DecodeRuneFromFirstByte(reader, b)
 			if err != nil {
 				out <- inputEvent{typeID: inputEventError, err: err}
 				return
 			}
 			out <- inputEvent{typeID: inputEventRune, r: r}
 		}
-	}
-}
-
-func discardEscapeSequence(reader *bufio.Reader) {
-	for reader.Buffered() > 0 {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return
-		}
-		if b >= 0x40 && b <= 0x7e {
-			return
-		}
-	}
-}
-
-func decodeRuneFromFirstByte(reader *bufio.Reader, first byte) (rune, error) {
-	if first < utf8.RuneSelf {
-		return rune(first), nil
-	}
-
-	need := utf8SequenceLength(first)
-	if need == 1 {
-		return rune(first), nil
-	}
-
-	buf := make([]byte, 0, need)
-	buf = append(buf, first)
-	for len(buf) < need {
-		b, err := reader.ReadByte()
-		if err != nil {
-			return 0, err
-		}
-		buf = append(buf, b)
-	}
-
-	r, size := utf8.DecodeRune(buf)
-	if r == utf8.RuneError && size == 1 {
-		return rune(first), nil
-	}
-	return r, nil
-}
-
-func utf8SequenceLength(first byte) int {
-	switch {
-	case first&0x80 == 0x00:
-		return 1
-	case first&0xe0 == 0xc0:
-		return 2
-	case first&0xf0 == 0xe0:
-		return 3
-	case first&0xf8 == 0xf0:
-		return 4
-	default:
-		return 1
 	}
 }
 
@@ -523,7 +480,7 @@ func (s *chatState) addRecipient(userID int64, username string, displayName stri
 	}
 
 	if username != "" {
-		s.recipientUsernames[userID] = normalizeUsername(username)
+		s.recipientUsernames[userID] = simpleui.NormalizeUsername(username)
 	}
 	if displayName != "" {
 		s.recipientDisplayMap[userID] = strings.TrimSpace(displayName)
@@ -543,7 +500,7 @@ func (s *chatState) recipientDisplay(userID int64) string {
 		return "none"
 	}
 
-	if username := normalizeUsername(s.recipientUsernames[userID]); username != "" {
+	if username := simpleui.NormalizeUsername(s.recipientUsernames[userID]); username != "" {
 		return "@" + username
 	}
 
@@ -561,7 +518,7 @@ func (s *chatState) currentRecipientPromptLabel() string {
 		return "none"
 	}
 
-	if username := normalizeUsername(s.recipientUsernames[userID]); username != "" {
+	if username := simpleui.NormalizeUsername(s.recipientUsernames[userID]); username != "" {
 		return "@" + username
 	}
 
@@ -571,28 +528,6 @@ func (s *chatState) currentRecipientPromptLabel() string {
 	}
 
 	return "unknown"
-}
-
-func channelMessageUsername(message channels.ChannelMessage) string {
-	if len(message.Params) == 0 {
-		return ""
-	}
-	return normalizeUsername(message.Params[channels.ParamUsername])
-}
-
-func channelMessageDisplayName(message channels.ChannelMessage) string {
-	if len(message.Params) == 0 {
-		return ""
-	}
-	return strings.TrimSpace(message.Params[channels.ParamDisplayName])
-}
-
-func normalizeUsername(username string) string {
-	username = strings.TrimSpace(username)
-	if username == "" {
-		return ""
-	}
-	return strings.TrimPrefix(username, "@")
 }
 
 func (s *chatState) currentRecipient() int64 {
@@ -635,125 +570,44 @@ func renderPrompt(writer *bufio.Writer, colors simpleTheme, state *chatState) {
 	clearLine(writer)
 
 	recipient := state.currentRecipientPromptLabel()
-	prefixColor := colors.fgWarn
+	prefixColor := colors.FGWarn
 	if state.currentRecipient() != 0 {
-		prefixColor = colors.fgAccent
+		prefixColor = colors.FGAccent
 	}
 
 	prefix := fmt.Sprintf("to[%s]> ", recipient)
-	fmt.Fprint(writer, colors.style(prefix, colors.bold, prefixColor))
-	fmt.Fprint(writer, colors.style(string(state.input), colors.fgStrong))
+	fmt.Fprint(writer, colors.Style(prefix, colors.Bold, prefixColor))
+	fmt.Fprint(writer, colors.Style(string(state.input), colors.FGStrong))
 	writer.Flush()
 }
 
 func writeChannelHeader(writer *bufio.Writer, colors simpleTheme, width int) {
-	left := "Benoit · Telegram Chat"
-	fmt.Fprintln(writer, colors.style(left, colors.bold, colors.fgAccent))
-	if width > 0 {
-		hint := "Enter send | Tab switch recipient | /exit to quit"
-		fmt.Fprintln(writer, colors.style(hint, colors.dim, colors.fgMuted))
-	}
-	fmt.Fprintln(writer)
+	title := "Benoit · Telegram Chat"
+	hint := "Enter send | Tab switch recipient | /exit to quit"
+	simpleui.WriteHeader(writer, colors, title, hint, width)
 	writer.Flush()
 }
 
 func printIncomingMessage(writer *bufio.Writer, colors simpleTheme, sender string, text string) {
-	printLine(writer, colors, sender, colors.bold, colors.fgAccent)
-	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		printLine(writer, colors, line, colors.fgUser)
-	}
-	printLine(writer, colors, "", colors.dim, colors.fgMuted)
+	simpleui.PrintIncomingMessage(writer, colors, sender, text)
 }
 
 func printOutgoingMessage(writer *bufio.Writer, colors simpleTheme, recipient string, text string) {
-	printLine(writer, colors, "you -> "+recipient, colors.bold, colors.fgMuted)
-	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
-		printLine(writer, colors, line, colors.fgStrong)
-	}
-	printLine(writer, colors, "", colors.dim, colors.fgMuted)
+	simpleui.PrintOutgoingMessage(writer, colors, recipient, text)
 }
 
 func printLine(writer *bufio.Writer, colors simpleTheme, line string, styles ...string) {
-	clearLine(writer)
-	if line == "" {
-		fmt.Fprint(writer, "\r\n")
-		writer.Flush()
-		return
-	}
-	fmt.Fprint(writer, colors.style(line, styles...), "\r\n")
-	writer.Flush()
+	simpleui.PrintLine(writer, colors, line, styles...)
 }
 
 func clearLine(writer *bufio.Writer) {
-	fmt.Fprint(writer, "\r\x1b[2K")
-}
-
-type simpleTheme struct {
-	enabled  bool
-	reset    string
-	bold     string
-	dim      string
-	fgStrong string
-	fgMuted  string
-	fgAccent string
-	fgWarn   string
-	fgUser   string
-	bgUser   string
+	simpleui.ClearLine(writer)
 }
 
 func newSimpleTheme(enabled bool) simpleTheme {
-	return simpleTheme{
-		enabled:  enabled,
-		reset:    "\x1b[0m",
-		bold:     "\x1b[1m",
-		dim:      "\x1b[2m",
-		fgStrong: ansiForeground("FFFFFF"),
-		fgMuted:  ansiForeground("95A3B8"),
-		fgAccent: ansiForeground("8FB3FF"),
-		fgWarn:   ansiForeground("FF5F5F"),
-		fgUser:   ansiForeground("E6EDF3"),
-		bgUser:   ansiBackground("1C1C1C"),
-	}
-}
-
-func ansiForeground(hex string) string {
-	r, g, b := rgbFromHex(hex)
-	return fmt.Sprintf("\x1b[38;2;%d;%d;%dm", r, g, b)
-}
-
-func ansiBackground(hex string) string {
-	r, g, b := rgbFromHex(hex)
-	return fmt.Sprintf("\x1b[48;2;%d;%d;%dm", r, g, b)
-}
-
-func rgbFromHex(hex string) (int64, int64, int64) {
-	hex = strings.TrimPrefix(strings.TrimSpace(hex), "#")
-	if len(hex) != 6 {
-		return 255, 255, 255
-	}
-	r, rErr := strconv.ParseInt(hex[0:2], 16, 64)
-	g, gErr := strconv.ParseInt(hex[2:4], 16, 64)
-	b, bErr := strconv.ParseInt(hex[4:6], 16, 64)
-	if rErr != nil || gErr != nil || bErr != nil {
-		return 255, 255, 255
-	}
-	return r, g, b
-}
-
-func (t simpleTheme) style(text string, codes ...string) string {
-	if !t.enabled || len(codes) == 0 {
-		return text
-	}
-	return strings.Join(codes, "") + text + t.reset
+	return simpleui.NewTheme(enabled)
 }
 
 func terminalWidth() int {
-	if !term.IsTerminal(int(os.Stdout.Fd())) {
-		return 0
-	}
-	width, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || width <= 0 {
-		return 0
-	}
-	return width
+	return simpleui.TerminalWidth(os.Stdout)
 }

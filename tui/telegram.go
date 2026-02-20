@@ -11,6 +11,7 @@ import (
 
 	"github.com/fernandopn/benoit/channels"
 	"github.com/fernandopn/benoit/providers"
+	simpleui "github.com/fernandopn/benoit/tui/simple"
 	"golang.org/x/term"
 )
 
@@ -107,10 +108,6 @@ func RunTelegram(ctx context.Context, telegramChannel channels.Channel, provider
 				}
 				return err
 			}
-
-			fmt.Fprintln(writer, colors.style("sent reply to Telegram", colors.fgMuted, colors.dim))
-			fmt.Fprintln(writer)
-			writer.Flush()
 		}
 	}
 }
@@ -168,14 +165,14 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 		OnChat: func(value string) {
 			switchState(providers.MsgTypeChatDelta)
 			if writer != nil {
-				fmt.Fprint(writer, colors.style(value, colors.fgStrong))
+				fmt.Fprint(writer, colors.Style(value, colors.FGStrong))
 				writer.Flush()
 			}
 		},
 		OnReasoning: func(value string) {
 			switchState(providers.MsgTypeReasoningSummaryDelta)
 			if writer != nil {
-				fmt.Fprint(writer, colors.style(value, colors.fgMuted, colors.dim))
+				fmt.Fprint(writer, colors.Style(value, colors.FGMuted, colors.Dim))
 				writer.Flush()
 			}
 		},
@@ -199,14 +196,14 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 			switchState(providers.MsgTypeContextUsage)
 			if writer != nil {
 				if left, ok := contextLeftPercent(value, metadata); ok {
-					fmt.Fprintln(writer, colors.style(formatContextLeft(left), colors.fgAccent, colors.dim))
+					fmt.Fprintln(writer, colors.Style(formatContextLeft(left), colors.FGAccent, colors.Dim))
 					writer.Flush()
 				}
 			}
 		},
 		OnError: func(errText string) {
 			if writer != nil {
-				fmt.Fprintln(os.Stderr, colors.style("request error:", colors.bold, colors.fgWarn), errText)
+				fmt.Fprintln(os.Stderr, colors.Style("request error:", colors.Bold, colors.FGWarn), errText)
 			}
 		},
 	})
@@ -267,13 +264,9 @@ func telegramSessionID(userID int64) string {
 }
 
 func writeTelegramHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
-	left := "Benoit · " + providerName + " · Telegram"
-	fmt.Fprintln(writer, colors.style(left, colors.bold, colors.fgAccent))
-	if width > 0 {
-		hint := "Listening for Telegram messages | Ctrl+C to quit"
-		fmt.Fprintln(writer, colors.style(hint, colors.dim, colors.fgMuted))
-	}
-	fmt.Fprintln(writer)
+	title := "Benoit · " + providerName + " · Telegram"
+	hint := "Listening for Telegram messages | Ctrl+C to quit"
+	simpleui.WriteHeader(writer, colors, title, hint, width)
 }
 
 func writeTelegramIncoming(writer *bufio.Writer, colors simpleTheme, message channels.ChannelMessage) {
@@ -284,13 +277,14 @@ func writeTelegramIncoming(writer *bufio.Writer, colors simpleTheme, message cha
 	if text == "" {
 		text = "(empty message)"
 	}
-	header := "unknown sender"
-	if message.UserID != 0 {
-		header = fmt.Sprintf("user:%d", message.UserID)
-	}
-	fmt.Fprintln(writer, colors.style(header, colors.bold, colors.fgAccent))
-	fmt.Fprintln(writer, colors.style(text, colors.fgUser))
+	header := formatTelegramIncomingHeader(message)
+	fmt.Fprintln(writer, colors.Style(header, colors.Bold, colors.FGAccent))
+	fmt.Fprintln(writer, colors.Style(text, colors.FGUser))
 	fmt.Fprintln(writer)
+}
+
+func formatTelegramIncomingHeader(message channels.ChannelMessage) string {
+	return simpleui.FormatTelegramIncomingHeader(message)
 }
 
 func runTelegramTypingLoop(ctx context.Context, telegramChannel channels.Channel, userID int64) {

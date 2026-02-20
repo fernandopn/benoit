@@ -356,6 +356,33 @@ func TestTelegramSessionID(t *testing.T) {
 	}
 }
 
+func TestFormatTelegramIncomingHeader(t *testing.T) {
+	message := channels.ChannelMessage{
+		UserID: 8230557735,
+		Params: map[string]string{
+			channels.ParamUsername:    "telegram_user",
+			channels.ParamDisplayName: "Telegram User",
+		},
+	}
+
+	if got := formatTelegramIncomingHeader(message); got != "user:8230557735 <telegram_user> (Telegram User)" {
+		t.Fatalf("unexpected header: %q", got)
+	}
+}
+
+func TestFormatTelegramIncomingHeaderWithoutUsername(t *testing.T) {
+	message := channels.ChannelMessage{
+		UserID: 8230557735,
+		Params: map[string]string{
+			channels.ParamDisplayName: "Telegram User",
+		},
+	}
+
+	if got := formatTelegramIncomingHeader(message); got != "user:8230557735 (Telegram User)" {
+		t.Fatalf("unexpected header without username: %q", got)
+	}
+}
+
 func TestIsTelegramUserAllowed(t *testing.T) {
 	allowed := map[int64]struct{}{77: {}}
 	if !isTelegramUserAllowed(77, allowed) {
