@@ -175,6 +175,7 @@ func selectedTools(cfg Config) ([]tools.Tool, error) {
 	toolSet := []tools.Tool{
 		tools.NewOpenAICodeInterpreterTool(),
 		tools.NewOpenAIWebSearchTool(),
+		tools.NewClockTool(),
 	}
 
 	matonAPIKey := strings.TrimSpace(cfg.Credentials.MatonAPIKey)
