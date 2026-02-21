@@ -1,11 +1,11 @@
 package tui
 
-import "github.com/fernandopn/benoit/sessionid"
+import "github.com/fernandopn/benoit/session"
 
 func resolveTUISessionID(raw string) string {
-	resolved, err := sessionid.ResolveInteractive(raw)
+	resolved, err := session.ResolveInteractiveSessionID(raw)
 	if err != nil {
-		fallback, _ := sessionid.ResolveInteractive("")
+		fallback, _ := session.ResolveInteractiveSessionID("")
 		return fallback
 	}
 	return resolved

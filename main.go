@@ -16,7 +16,6 @@ import (
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
 	"github.com/fernandopn/benoit/session"
-	"github.com/fernandopn/benoit/sessionid"
 	"github.com/fernandopn/benoit/tools"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
@@ -161,7 +160,7 @@ func validateConfig(cfg Config) error {
 		if cfg.Render != RenderSimple && cfg.Render != RenderBubbleTea {
 			return fmt.Errorf("flag error: invalid render mode %q", cfg.Render)
 		}
-		if err := sessionid.Validate(cfg.SessionID); err != nil {
+		if err := session.ValidateSessionID(cfg.SessionID); err != nil {
 			return fmt.Errorf("flag error: invalid -session-id: %w", err)
 		}
 		return nil

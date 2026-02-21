@@ -11,7 +11,7 @@ import (
 
 	"github.com/fernandopn/benoit/channels"
 	"github.com/fernandopn/benoit/providers"
-	"github.com/fernandopn/benoit/sessionid"
+	"github.com/fernandopn/benoit/session"
 	simpleui "github.com/fernandopn/benoit/tui/simple"
 	tuiutils "github.com/fernandopn/benoit/tui/utils"
 	"golang.org/x/term"
@@ -267,7 +267,7 @@ func splitTelegramMessage(text string, maxCharacters int) []string {
 }
 
 func telegramSessionID(userID int64) string {
-	return sessionid.Telegram(userID)
+	return session.TelegramSessionID(userID)
 }
 
 func writeTelegramHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {

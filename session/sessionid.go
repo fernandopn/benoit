@@ -1,4 +1,4 @@
-package sessionid
+package session
 
 import (
 	"errors"
@@ -11,27 +11,27 @@ import (
 )
 
 const (
-	Default       = "__default__"
-	maxSessionLen = 256
+	DefaultSessionID = "__default__"
+	maxSessionIDLen  = 256
 )
 
 var errSessionIDHasControlChars = errors.New("session ID cannot contain control characters")
 
-func Normalize(sessionID string) string {
+func NormalizeSessionID(sessionID string) string {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
-		return Default
+		return DefaultSessionID
 	}
 	return sessionID
 }
 
-func Validate(sessionID string) error {
+func ValidateSessionID(sessionID string) error {
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {
 		return nil
 	}
-	if len(sessionID) > maxSessionLen {
-		return fmt.Errorf("session ID cannot exceed %d characters", maxSessionLen)
+	if len(sessionID) > maxSessionIDLen {
+		return fmt.Errorf("session ID cannot exceed %d characters", maxSessionIDLen)
 	}
 	for _, r := range sessionID {
 		if unicode.IsControl(r) {
@@ -41,18 +41,18 @@ func Validate(sessionID string) error {
 	return nil
 }
 
-func ResolveInteractive(sessionID string) (string, error) {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		sessionID = uuid.NewString()
+func ResolveInteractiveSessionID(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		raw = uuid.NewString()
 	}
-	if err := Validate(sessionID); err != nil {
+	if err := ValidateSessionID(raw); err != nil {
 		return "", err
 	}
-	return sessionID, nil
+	return raw, nil
 }
 
-func Telegram(userID int64) string {
+func TelegramSessionID(userID int64) string {
 	if userID == 0 {
 		return ""
 	}

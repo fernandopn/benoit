@@ -70,7 +70,7 @@ func (f *providerFactory) Name() string {
 }
 
 func (f *providerFactory) providerForSession(sessionID string) (providers.Provider, error) {
-	normalizedSessionID := persistence.NormalizeSessionID(sessionID)
+	normalizedSessionID := NormalizeSessionID(sessionID)
 
 	f.mu.Lock()
 	entry, ok := f.entries[normalizedSessionID]
@@ -162,7 +162,7 @@ func newRouterProvider(factory *providerFactory) (providers.Provider, error) {
 	if factory == nil {
 		return nil, fmt.Errorf("provider factory is required")
 	}
-	return &routerProvider{factory: factory, defaultSessionID: persistence.NormalizeSessionID("")}, nil
+	return &routerProvider{factory: factory, defaultSessionID: NormalizeSessionID("")}, nil
 }
 
 func (r *routerProvider) Chat(ctx context.Context, input string) <-chan providers.Msg {
@@ -212,7 +212,7 @@ func (r *routerProvider) resolveSessionID(ctx context.Context, explicit string) 
 	if sessionID == "" {
 		sessionID = r.defaultSessionID
 	}
-	return persistence.NormalizeSessionID(sessionID)
+	return NormalizeSessionID(sessionID)
 }
 
 func providerErrorStream(err error) <-chan providers.Msg {
