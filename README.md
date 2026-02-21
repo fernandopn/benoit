@@ -25,7 +25,8 @@ official Go SDK.
 - `-timeout` request timeout (for example: `45s`, `2m`)
   - default: `20m`
 - `-fs-root`
-  - filesystem root for file tools (`glob`, `grep`, `read`, `write`, `apply_patch`, `get_current_directory`)
+  - filesystem sandbox root for file tools (`glob`, `grep`, `read`, `write`, `apply_patch`)
+  - when configured, file tools run in a chroot-like view where this directory is virtual `/`
   - if omitted, file tools are not registered
   - default: current working directory
 - `-db-path`
@@ -77,7 +78,9 @@ official Go SDK.
 
 - Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
 - Tools always enabled in provider commands: `code_interpreter`, `web_search`, `get_time`.
-- TUI mode enables filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`, `get_current_directory`.
+- TUI mode enables filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
+- File tool paths are virtualized when `-fs-root` is set: `/` maps to the configured sandbox root on disk, and all resolved paths are still validated against the allowed prefix policy.
+- In sandbox mode, do not assume `/mnt/data` exists; discover available roots with `glob` using `path: "/"` and `pattern: "*"`.
 - `send_channel_message` is enabled only in `tui` mode when `TELEGRAM_API_KEY` is set. It accepts `channel`, `user_id`, and `message`.
 - `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
 - `maton_gcalendar` `list_events` requires `query.timeMin` and `query.timeMax` (RFC3339) to keep event queries bounded.

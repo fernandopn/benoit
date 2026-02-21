@@ -55,7 +55,7 @@ func (a *openAIClientAdapter) NewStreamingResponse(ctx context.Context, params r
 	return a.client.Responses.NewStreaming(ctx, params)
 }
 
-const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). Use glob for path discovery and batch independent read/grep calls together. Do not serialize independent tool calls."
+const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). Filesystem tools use sandbox paths where / is the configured -fs-root. Do not assume /mnt/data exists. Discover paths first with glob(path:\"/\", pattern:\"*\") and then batch independent read/grep calls together. Do not serialize independent tool calls."
 const compressionSeedPromptPrefix = "Treat the following compressed context as authoritative memory for future turns. Do not call tools. Reply with exactly OK.\n\nCompressed context:\n"
 
 // OpenAI uses the Responses streaming API.

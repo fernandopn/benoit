@@ -250,6 +250,15 @@ func TestParseToolArgs(t *testing.T) {
 	}
 }
 
+func TestToolBatchingInstructionMentionsSandboxDiscovery(t *testing.T) {
+	if !strings.Contains(toolBatchingInstruction, "Do not assume /mnt/data exists") {
+		t.Fatalf("expected /mnt/data guidance, got: %q", toolBatchingInstruction)
+	}
+	if !strings.Contains(toolBatchingInstruction, `glob(path:"/", pattern:"*")`) {
+		t.Fatalf("expected sandbox discovery example, got: %q", toolBatchingInstruction)
+	}
+}
+
 func TestOpenAIState(t *testing.T) {
 	state := newOpenAIState()
 	if state.get() != "" {

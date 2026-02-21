@@ -93,3 +93,80 @@ func TestListFilesToolReadDirError(t *testing.T) {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }
+
+func TestListFilesToolGlobStarWithChroot(t *testing.T) {
+	base := fakeFS{entries: map[string][]os.DirEntry{
+		"/sandbox": {
+			fakeDirEntry{name: "a.txt"},
+			fakeDirEntry{name: "dir", dir: true},
+		},
+		"/sandbox/dir": {
+			fakeDirEntry{name: "nested", dir: true},
+			fakeDirEntry{name: "b.txt"},
+		},
+		"/sandbox/dir/nested": {
+			fakeDirEntry{name: "c.txt"},
+		},
+	}}
+	sandboxFS, err := NewChrootFSWithBase(base, "/sandbox")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tool := NewListFilesToolWithFS(sandboxFS)
+	out, err := tool.Call(context.Background(), map[string]any{"pattern": "*", "path": "/"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "/a.txt\n/dir" {
+		t.Fatalf("unexpected glob output: %q", out)
+	}
+}
+
+func TestListFilesToolGlobSingleDirRecursiveWithChroot(t *testing.T) {
+	base := fakeFS{entries: map[string][]os.DirEntry{
+		"/sandbox": {
+			fakeDirEntry{name: "a.txt"},
+			fakeDirEntry{name: "dir", dir: true},
+		},
+		"/sandbox/dir": {
+			fakeDirEntry{name: "nested", dir: true},
+			fakeDirEntry{name: "b.txt"},
+		},
+		"/sandbox/dir/nested": {
+			fakeDirEntry{name: "c.txt"},
+		},
+	}}
+	sandboxFS, err := NewChrootFSWithBase(base, "/sandbox")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tool := NewListFilesToolWithFS(sandboxFS)
+	out, err := tool.Call(context.Background(), map[string]any{"pattern": "*/**", "path": "/"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "/dir/b.txt\n/dir/nested\n/dir/nested/c.txt" {
+		t.Fatalf("unexpected glob output: %q", out)
+	}
+}
+
+func TestListFilesToolMissingPathIncludesSandboxHint(t *testing.T) {
+	base := fakeFS{entries: map[string][]os.DirEntry{
+		"/sandbox": {
+			fakeDirEntry{name: "tool_test.txt"},
+		},
+	}}
+	sandboxFS, err := NewChrootFSWithBase(base, "/sandbox")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	tool := NewListFilesToolWithFS(sandboxFS)
+	out, err := tool.Call(context.Background(), map[string]any{"pattern": "**/*", "path": "/mnt/data"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "error: path not found: /mnt/data (sandbox root is /); try path \"/\" with pattern \"*\""
+	if out != want {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}

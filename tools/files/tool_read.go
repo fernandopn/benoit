@@ -34,13 +34,13 @@ func (r *ReadFileTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        r.Name(),
-			Description: openai.String("Read a file or directory from the local filesystem. Returns numbered lines for files and plain entries for directories."),
+			Description: openai.String("Read a file or directory from the filesystem sandbox. Returns numbered lines for files and plain entries for directories."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					filePathArgName: map[string]any{
 						"type":        "string",
-						"description": "Absolute file or directory path",
+						"description": "Sandbox file or directory path. Use / as the sandbox root.",
 					},
 					offsetArgName: map[string]any{
 						"type":        "integer",

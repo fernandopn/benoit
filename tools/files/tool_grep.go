@@ -33,7 +33,7 @@ func (g *GrepTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        g.Name(),
-			Description: openai.String("Search file contents by regex. Returns matching paths and line numbers."),
+			Description: openai.String("Search file contents by regex. Returns matching paths and line numbers inside the filesystem sandbox."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -43,7 +43,7 @@ func (g *GrepTool) Definition() responses.ToolUnionParam {
 					},
 					pathArgName: map[string]any{
 						"type":        "string",
-						"description": "Search root path (optional)",
+						"description": "Search root path (optional). Use sandbox paths, with / as the sandbox root.",
 					},
 					includeArgName: map[string]any{
 						"type":        "string",

@@ -444,7 +444,7 @@ type sharedProviderFlags struct {
 
 func bindStorageFlags(flagSet *flag.FlagSet, defaultRoot string) sharedStorageFlags {
 	return sharedStorageFlags{
-		fsRoot: flagSet.String("fs-root", defaultRoot, "filesystem root"),
+		fsRoot: flagSet.String("fs-root", defaultRoot, "filesystem sandbox root (chroot for file tools)"),
 		dbPath: flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence"),
 	}
 }

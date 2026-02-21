@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -168,6 +169,23 @@ func TestPatchFileToolRestrictedFS(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if out != "error: path outside allowed root: /root" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestPatchFileToolInvalidHunkHeaderGuidance(t *testing.T) {
+	fs := fakeFS{files: map[string][]byte{"/file.txt": []byte("hello")}}
+	tool := NewPatchFileToolWithFS(fs)
+	out, err := tool.Call(context.Background(), map[string]any{
+		"patchText": "*** Begin Patch\n*** Update File: /file.txt\n@@\n-hello\n+bye\n*** End Patch",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(out, "invalid hunk header at line 1") {
+		t.Fatalf("unexpected output: %q", out)
+	}
+	if !strings.Contains(out, "expected format: @@ -<start>[,<count>] +<start>[,<count>] @@") {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }

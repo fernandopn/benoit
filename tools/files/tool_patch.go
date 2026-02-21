@@ -12,6 +12,8 @@ import (
 
 var updateHunkHeaderPattern = regexp.MustCompile(`^@@\s+-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@`)
 
+const unifiedHunkHeaderFormat = "@@ -<start>[,<count>] +<start>[,<count>] @@"
+
 // PatchFileTool applies file patches using a patch envelope.
 type PatchFileTool struct {
 	fs FileSystem
@@ -34,7 +36,7 @@ func (p *PatchFileTool) Definition() responses.ToolUnionParam {
 		OfFunction: &responses.FunctionToolParam{
 			Name: p.Name(),
 			Description: openai.String(
-				"Apply a patch with *** Begin Patch / *** End Patch envelope and Add/Update/Delete file operations.",
+				"Apply a patch with *** Begin Patch / *** End Patch envelope and Add/Update/Delete file operations. Paths are sandbox paths, with / as the sandbox root.",
 			),
 			Parameters: map[string]any{
 				"type": "object",
@@ -244,11 +246,11 @@ func parsePatchHunks(lines []string) ([]patchHunk, error) {
 		}
 		matches := updateHunkHeaderPattern.FindStringSubmatch(line)
 		if len(matches) != 2 {
-			return nil, fmt.Errorf("invalid hunk header: %s", line)
+			return nil, fmt.Errorf("invalid hunk header at line %d: %q (expected format: %s)", i+1, line, unifiedHunkHeaderFormat)
 		}
 		oldStart := 0
 		if _, err := fmt.Sscanf(matches[1], "%d", &oldStart); err != nil {
-			return nil, fmt.Errorf("invalid hunk start")
+			return nil, fmt.Errorf("invalid hunk start at line %d", i+1)
 		}
 		i++
 		hunkLines := make([]string, 0)

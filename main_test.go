@@ -272,7 +272,7 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -289,7 +289,7 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory", "maton_gcalendar", "maton_gmail"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "maton_gcalendar", "maton_gmail"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -306,7 +306,7 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory", "send_channel_message"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "send_channel_message"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -323,7 +323,7 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory", "send_channel_message", "maton_gcalendar", "maton_gmail"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "send_channel_message", "maton_gcalendar", "maton_gmail"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}

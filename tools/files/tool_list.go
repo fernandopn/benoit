@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -33,7 +34,7 @@ func (l *ListFilesTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        l.Name(),
-			Description: openai.String("Match file paths using a glob pattern. Supports recursive ** patterns."),
+			Description: openai.String("Match file paths using a glob pattern. Supports recursive ** patterns. Paths are resolved inside the filesystem sandbox."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -43,7 +44,7 @@ func (l *ListFilesTool) Definition() responses.ToolUnionParam {
 					},
 					pathArgName: map[string]any{
 						"type":        "string",
-						"description": "Search root path (optional)",
+						"description": "Search root path (optional). Use sandbox paths, with / as the sandbox root.",
 					},
 				},
 				"required":             []string{patternArgName},
@@ -99,10 +100,39 @@ func (l *ListFilesTool) Call(ctx context.Context, args map[string]any) (string, 
 		return nil
 	})
 	if err != nil {
+		err = mapGlobPathError(err, searchRoot)
 		return toolError(err), nil
 	}
 	sort.Strings(matches)
 	return strings.Join(matches, "\n"), nil
+}
+
+func mapGlobPathError(err error, requestedPath string) error {
+	if !isPathNotFoundError(err) {
+		return err
+	}
+	requestedPath = strings.TrimSpace(requestedPath)
+	if requestedPath == "" || requestedPath == "." {
+		requestedPath = "/"
+	}
+	return fmt.Errorf("path not found: %s (sandbox root is /); try path \"/\" with pattern \"*\"", requestedPath)
+}
+
+func isPathNotFoundError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if os.IsNotExist(err) {
+		return true
+	}
+	message := strings.ToLower(strings.TrimSpace(err.Error()))
+	if strings.Contains(message, "no such file or directory") {
+		return true
+	}
+	if strings.Contains(message, "path not found") {
+		return true
+	}
+	return false
 }
 
 type globMatcher struct {

@@ -13,17 +13,16 @@ func NewToolSet(root string) ([]tools.Tool, error) {
 		return nil, fmt.Errorf("fs root is required")
 	}
 
-	restrictedFS, err := NewRestrictedFS(root)
+	sandboxFS, err := NewChrootFS(root)
 	if err != nil {
 		return nil, err
 	}
 
 	return []tools.Tool{
-		NewListFilesToolWithFS(restrictedFS),
-		NewGrepToolWithFS(restrictedFS),
-		NewReadFileToolWithFS(restrictedFS),
-		NewWriteFileToolWithFS(restrictedFS),
-		NewPatchFileToolWithFS(restrictedFS),
-		NewCurrentDirectoryToolWithFS(restrictedFS),
+		NewListFilesToolWithFS(sandboxFS),
+		NewGrepToolWithFS(sandboxFS),
+		NewReadFileToolWithFS(sandboxFS),
+		NewWriteFileToolWithFS(sandboxFS),
+		NewPatchFileToolWithFS(sandboxFS),
 	}, nil
 }
