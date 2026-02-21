@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -32,6 +33,13 @@ func (s *stubProvider) Chat(_ context.Context, _ string) <-chan providers.Msg {
 		}
 	}()
 	return out
+}
+
+func (s *stubProvider) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
+	if compressor == nil {
+		return "", errors.New("compressor is required")
+	}
+	return compressor.Compress(ctx, s, sessionID)
 }
 
 func (s *stubProvider) ListModels(_ context.Context) ([]string, error) {

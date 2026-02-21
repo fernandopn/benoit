@@ -136,7 +136,7 @@ func simpleTerminalWidth() int {
 
 func writeSimpleHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
 	title := "Benoit · " + providerName
-	hint := "Enter to send | Shift+Enter newline | /exit to quit"
+	hint := "Enter to send | Shift+Enter newline | /compress to compact | /exit to quit"
 	simpleui.WriteHeader(writer, colors, title, hint, width)
 }
 

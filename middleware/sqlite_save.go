@@ -149,6 +149,10 @@ func (s *SQLiteSave) ChatInSession(ctx context.Context, input string, sessionID 
 	})
 }
 
+func (s *SQLiteSave) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
+	return s.provider.PerformCompression(ctx, sessionID, compressor)
+}
+
 func (s *SQLiteSave) chat(ctx context.Context, input string, start func() <-chan providers.Msg) <-chan providers.Msg {
 	out := make(chan providers.Msg, 4)
 	if err := s.storeInput(ctx, input); err != nil {

@@ -22,10 +22,17 @@ type Msg struct {
 	Metadata map[string]string
 }
 
+// Compressor produces a compressed summary for a provider session.
+type Compressor interface {
+	Compress(ctx context.Context, provider Provider, sessionID string) (string, error)
+}
+
 // Provider abstracts the chat interaction for a model backend.
 type Provider interface {
 	// Chat returns a stream of messages. The stream is done when the channel closes.
 	Chat(ctx context.Context, input string) <-chan Msg
+	// PerformCompression compresses, resets, and re-seeds session context.
+	PerformCompression(ctx context.Context, sessionID string, compressor Compressor) (string, error)
 	// ListModels returns the available model IDs for the provider.
 	ListModels(ctx context.Context) ([]string, error)
 	// Name returns the provider display name.

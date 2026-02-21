@@ -43,6 +43,14 @@ func (p *telegramProviderStub) Chat(ctx context.Context, input string) <-chan pr
 	return out
 }
 
+func (p *telegramProviderStub) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
+	_ = sessionID
+	if compressor == nil {
+		return "", errors.New("compressor is required")
+	}
+	return compressor.Compress(ctx, p, sessionID)
+}
+
 func (p *telegramProviderStub) ListModels(ctx context.Context) ([]string, error) {
 	_ = ctx
 	return nil, nil

@@ -17,6 +17,13 @@ func (p *simpleProvider) Chat(_ context.Context, _ string) <-chan providers.Msg 
 	return out
 }
 
+func (p *simpleProvider) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
+	_ = ctx
+	_ = sessionID
+	_ = compressor
+	return "", errors.New("not implemented")
+}
+
 func (p *simpleProvider) ListModels(_ context.Context) ([]string, error) {
 	return nil, nil
 }

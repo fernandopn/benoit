@@ -3,7 +3,10 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -296,5 +299,227 @@ func TestEmitFinalStreamMessagesFallsBackToDeltas(t *testing.T) {
 	}
 	if second.Type != MsgTypeReasoningSummaryFinal || second.Value != "reasoning delta" {
 		t.Fatalf("unexpected second fallback final message: %#v", second)
+	}
+}
+
+type scriptedResponseStream struct {
+	events []responses.ResponseStreamEventUnion
+	idx    int
+	err    error
+}
+
+func (s *scriptedResponseStream) Next() bool {
+	if s.idx >= len(s.events) {
+		return false
+	}
+	s.idx++
+	return true
+}
+
+func (s *scriptedResponseStream) Current() responses.ResponseStreamEventUnion {
+	if s.idx == 0 || s.idx > len(s.events) {
+		return responses.ResponseStreamEventUnion{}
+	}
+	return s.events[s.idx-1]
+}
+
+func (s *scriptedResponseStream) Err() error {
+	return s.err
+}
+
+type scriptedOpenAIClient struct {
+	mu      sync.Mutex
+	streams []responseStream
+	params  []responses.ResponseNewParams
+}
+
+func (s *scriptedOpenAIClient) ListModels(ctx context.Context) ([]string, error) {
+	_ = ctx
+	return nil, nil
+}
+
+func (s *scriptedOpenAIClient) NewStreamingResponse(ctx context.Context, params responses.ResponseNewParams) responseStream {
+	_ = ctx
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.params = append(s.params, params)
+	if len(s.streams) == 0 {
+		return &scriptedResponseStream{}
+	}
+	stream := s.streams[0]
+	s.streams = s.streams[1:]
+	return stream
+}
+
+func outputDeltaEvent(text string) responses.ResponseStreamEventUnion {
+	return responses.ResponseStreamEventUnion{Type: "response.output_text.delta", Delta: text}
+}
+
+func completedEvent(id string) responses.ResponseStreamEventUnion {
+	return responses.ResponseStreamEventUnion{Type: "response.completed", Response: responses.Response{ID: id}}
+}
+
+type scriptedCompressor struct {
+	prompt string
+}
+
+func (c scriptedCompressor) Compress(ctx context.Context, provider Provider, sessionID string) (string, error) {
+	if provider == nil {
+		return "", errors.New("provider is required")
+	}
+	var stream <-chan Msg
+	if sessionProvider, ok := provider.(SessionProvider); ok {
+		stream = sessionProvider.ChatInSession(ctx, c.prompt, sessionID)
+	} else {
+		stream = provider.Chat(ctx, c.prompt)
+	}
+	var (
+		delta strings.Builder
+		final strings.Builder
+	)
+	for msg := range stream {
+		switch msg.Type {
+		case MsgTypeChatDelta:
+			delta.WriteString(msg.Value)
+		case MsgTypeChatFinal:
+			final.WriteString(msg.Value)
+		case MsgTypeError:
+			errText := strings.TrimSpace(msg.Value)
+			if errText == "" {
+				errText = "provider returned an empty error"
+			}
+			return "", errors.New(errText)
+		}
+	}
+	output := strings.TrimSpace(final.String())
+	if output == "" {
+		output = strings.TrimSpace(delta.String())
+	}
+	if output == "" {
+		return "", errors.New("empty compression output")
+	}
+	return output, nil
+}
+
+type failingAfterStreamCompressor struct {
+	prompt string
+}
+
+func (c failingAfterStreamCompressor) Compress(ctx context.Context, provider Provider, sessionID string) (string, error) {
+	_, _ = scriptedCompressor{prompt: c.prompt}.Compress(ctx, provider, sessionID)
+	return "", errors.New("compress failed")
+}
+
+func TestOpenAIPerformCompressionResetsAndSeedsSession(t *testing.T) {
+	client := &scriptedOpenAIClient{streams: []responseStream{
+		&scriptedResponseStream{events: []responses.ResponseStreamEventUnion{
+			outputDeltaEvent("compressed summary"),
+			completedEvent("resp-compress"),
+		}},
+		&scriptedResponseStream{events: []responses.ResponseStreamEventUnion{
+			outputDeltaEvent("OK"),
+			completedEvent("resp-seed"),
+		}},
+	}}
+	provider := &OpenAI{
+		client:     client,
+		state:      newOpenAIState(),
+		model:      "gpt-5.2",
+		toolRunner: parallelToolRunner{},
+	}
+	provider.state.set("session-1", "prev-1")
+
+	summary, err := provider.PerformCompression(context.Background(), "session-1", scriptedCompressor{prompt: "compress to 80 words"})
+	if err != nil {
+		t.Fatalf("unexpected compression error: %v", err)
+	}
+	if summary != "compressed summary" {
+		t.Fatalf("unexpected compressed summary: %q", summary)
+	}
+	if got := provider.state.get("session-1"); got != "resp-seed" {
+		t.Fatalf("expected seeded response id, got %q", got)
+	}
+
+	if len(client.params) != 2 {
+		t.Fatalf("expected 2 response requests, got %d", len(client.params))
+	}
+
+	firstJSON, err := json.Marshal(client.params[0])
+	if err != nil {
+		t.Fatalf("marshal first params: %v", err)
+	}
+	firstText := string(firstJSON)
+	if !strings.Contains(firstText, "\"previous_response_id\":\"prev-1\"") {
+		t.Fatalf("expected first request to use previous response id, got %s", firstText)
+	}
+	if !strings.Contains(firstText, "compress to 80 words") {
+		t.Fatalf("expected compression prompt with requested limit, got %s", firstText)
+	}
+
+	secondJSON, err := json.Marshal(client.params[1])
+	if err != nil {
+		t.Fatalf("marshal second params: %v", err)
+	}
+	secondText := string(secondJSON)
+	if strings.Contains(secondText, "\"previous_response_id\"") {
+		t.Fatalf("expected seeded request to start a fresh context, got %s", secondText)
+	}
+	if !strings.Contains(secondText, "compressed summary") {
+		t.Fatalf("expected seeded request to include compressed summary, got %s", secondText)
+	}
+}
+
+func TestOpenAIPerformCompressionRestoresStateOnInjectionFailure(t *testing.T) {
+	client := &scriptedOpenAIClient{streams: []responseStream{
+		&scriptedResponseStream{events: []responses.ResponseStreamEventUnion{
+			outputDeltaEvent("compressed summary"),
+			completedEvent("resp-compress"),
+		}},
+		&scriptedResponseStream{err: errors.New("inject failed")},
+	}}
+	provider := &OpenAI{
+		client:     client,
+		state:      newOpenAIState(),
+		model:      "gpt-5.2",
+		toolRunner: parallelToolRunner{},
+	}
+	provider.state.set("session-1", "prev-1")
+
+	_, err := provider.PerformCompression(context.Background(), "session-1", scriptedCompressor{prompt: "compress to 60 words"})
+	if err == nil {
+		t.Fatal("expected compression injection error")
+	}
+	if !strings.Contains(err.Error(), "compression injection failed") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := provider.state.get("session-1"); got != "prev-1" {
+		t.Fatalf("expected previous state to be restored, got %q", got)
+	}
+}
+
+func TestOpenAIPerformCompressionRestoresStateOnCompressorFailure(t *testing.T) {
+	client := &scriptedOpenAIClient{streams: []responseStream{
+		&scriptedResponseStream{events: []responses.ResponseStreamEventUnion{
+			outputDeltaEvent("compressed summary"),
+			completedEvent("resp-compress"),
+		}},
+	}}
+	provider := &OpenAI{
+		client:     client,
+		state:      newOpenAIState(),
+		model:      "gpt-5.2",
+		toolRunner: parallelToolRunner{},
+	}
+	provider.state.set("session-1", "prev-1")
+
+	_, err := provider.PerformCompression(context.Background(), "session-1", failingAfterStreamCompressor{prompt: "compress prompt"})
+	if err == nil {
+		t.Fatal("expected compressor error")
+	}
+	if got := provider.state.get("session-1"); got != "prev-1" {
+		t.Fatalf("expected previous state to be restored after compressor failure, got %q", got)
+	}
+	if len(client.params) != 1 {
+		t.Fatalf("expected only compressor request to run, got %d", len(client.params))
 	}
 }

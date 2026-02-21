@@ -3,12 +3,16 @@ package tui
 import (
 	"context"
 	"errors"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/fernandopn/benoit/compression"
 	"github.com/fernandopn/benoit/providers"
 	tuiutils "github.com/fernandopn/benoit/tui/utils"
 )
+
+const defaultCompressionMaxWords = 300
 
 type streamStarter func(context.Context, string) <-chan providers.Msg
 
@@ -26,14 +30,78 @@ func streamStartForProvider(provider providers.Provider, sessionID string) strea
 		return nil
 	}
 	sessionID = strings.TrimSpace(sessionID)
+	startChat := provider.Chat
 	if sessionID != "" {
 		if sessionProvider, ok := provider.(providers.SessionProvider); ok {
-			return func(ctx context.Context, prompt string) <-chan providers.Msg {
+			startChat = func(ctx context.Context, prompt string) <-chan providers.Msg {
 				return sessionProvider.ChatInSession(ctx, prompt, sessionID)
 			}
 		}
 	}
-	return provider.Chat
+
+	return func(ctx context.Context, prompt string) <-chan providers.Msg {
+		if commandStream, ok := startCommandStream(ctx, provider, sessionID, prompt); ok {
+			return commandStream
+		}
+		return startChat(ctx, prompt)
+	}
+}
+
+func startCommandStream(ctx context.Context, provider providers.Provider, sessionID string, prompt string) (<-chan providers.Msg, bool) {
+	maxWords, isCompress, parseErr := parseCompressCommand(prompt)
+	if !isCompress {
+		return nil, false
+	}
+	if parseErr != nil {
+		return singleErrorStream(parseErr.Error()), true
+	}
+
+	out := make(chan providers.Msg, 2)
+	go func() {
+		defer close(out)
+		compressor := compression.NewBasic(maxWords)
+		summary, err := provider.PerformCompression(ctx, sessionID, compressor)
+		if err != nil {
+			out <- providers.Msg{Type: providers.MsgTypeError, Value: err.Error()}
+			return
+		}
+		summary = strings.TrimSpace(summary)
+		if summary == "" {
+			out <- providers.Msg{Type: providers.MsgTypeError, Value: "compression returned empty summary"}
+			return
+		}
+		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: summary}
+		out <- providers.Msg{Type: providers.MsgTypeChatFinal, Value: summary}
+	}()
+	return out, true
+}
+
+func parseCompressCommand(prompt string) (int, bool, error) {
+	parts := strings.Fields(strings.TrimSpace(prompt))
+	if len(parts) == 0 {
+		return 0, false, nil
+	}
+	if strings.ToLower(parts[0]) != "/compress" {
+		return 0, false, nil
+	}
+	if len(parts) == 1 {
+		return defaultCompressionMaxWords, true, nil
+	}
+	if len(parts) != 2 {
+		return 0, true, errors.New("usage: /compress [max_words]")
+	}
+	maxWords, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || maxWords <= 0 {
+		return 0, true, errors.New("usage: /compress [max_words]")
+	}
+	return maxWords, true, nil
+}
+
+func singleErrorStream(errText string) <-chan providers.Msg {
+	out := make(chan providers.Msg, 1)
+	out <- providers.Msg{Type: providers.MsgTypeError, Value: errText}
+	close(out)
+	return out
 }
 
 func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, start streamStarter, callbacks streamCallbacks) (string, error) {

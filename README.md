@@ -12,6 +12,7 @@ official Go SDK.
 ## Usage
 
 - Type a line after the `>: ` prompt.
+- Type `/compress` (or `/compress <max_words>`) to compact and re-seed context.
 - Submit `/exit` or `/quit` to leave.
 
 ## Flags

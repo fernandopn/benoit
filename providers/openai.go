@@ -56,6 +56,7 @@ func (a *openAIClientAdapter) NewStreamingResponse(ctx context.Context, params r
 }
 
 const toolBatchingInstruction = "When tool calls are independent, emit all needed tool calls in a single response (parallel tool calls). After receiving a directory listing, batch list_files calls for all subdirectories in one response. Do not serialize independent tool calls."
+const compressionSeedPromptPrefix = "Treat the following compressed context as authoritative memory for future turns. Do not call tools. Reply with exactly OK.\n\nCompressed context:\n"
 
 // OpenAI uses the Responses streaming API.
 type OpenAI struct {
@@ -112,6 +113,16 @@ func (s *openAIState) set(sessionID string, id string) {
 		s.previousBySession = map[string]string{}
 	}
 	s.previousBySession[normalizeSessionID(sessionID)] = id
+	s.mu.Unlock()
+}
+
+func (s *openAIState) reset(sessionID string) {
+	s.mu.Lock()
+	if s.previousBySession == nil {
+		s.mu.Unlock()
+		return
+	}
+	delete(s.previousBySession, normalizeSessionID(sessionID))
 	s.mu.Unlock()
 }
 
@@ -204,6 +215,62 @@ func (b *OpenAI) ListModels(ctx context.Context) ([]string, error) {
 
 func (b *OpenAI) Name() string {
 	return fmt.Sprintf("OpenAI %s", b.model)
+}
+
+func (s *OpenAI) PerformCompression(ctx context.Context, sessionID string, compressor Compressor) (string, error) {
+	if ctx == nil {
+		return "", fmt.Errorf("context is required")
+	}
+	if compressor == nil {
+		return "", fmt.Errorf("compressor is required")
+	}
+
+	sessionID = normalizeSessionID(sessionID)
+	previousID := s.state.get(sessionID)
+	compressed, err := compressor.Compress(ctx, s, sessionID)
+	if err != nil {
+		s.state.reset(sessionID)
+		if previousID != "" {
+			s.state.set(sessionID, previousID)
+		}
+		return "", err
+	}
+
+	s.state.reset(sessionID)
+	if err := s.seedCompressedContext(ctx, sessionID, compressed); err != nil {
+		s.state.reset(sessionID)
+		if previousID != "" {
+			s.state.set(sessionID, previousID)
+		}
+		return "", err
+	}
+	return compressed, nil
+}
+
+func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, compressed string) error {
+	compressed = strings.TrimSpace(compressed)
+	if compressed == "" {
+		return fmt.Errorf("compressed context is empty")
+	}
+	seedPrompt := compressionSeedPromptPrefix + compressed
+	stream := s.ChatInSession(ctx, seedPrompt, sessionID)
+	if stream == nil {
+		return fmt.Errorf("provider returned nil stream while injecting compressed context")
+	}
+	for msg := range stream {
+		if msg.Type != MsgTypeError {
+			continue
+		}
+		errText := strings.TrimSpace(msg.Value)
+		if errText == "" {
+			errText = "provider returned an empty error"
+		}
+		return fmt.Errorf("compression injection failed: %s", errText)
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (b *OpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {

@@ -16,7 +16,7 @@ const (
 
 const (
 	DefaultWelcomeText = "Welcome. Type a prompt and press Enter."
-	DefaultHelpText    = "Enter to send | /exit to quit | PgUp/PgDn or mouse wheel to scroll"
+	DefaultHelpText    = "Enter to send | /compress to compact | /exit to quit | PgUp/PgDn or mouse wheel to scroll"
 )
 
 type StreamStarter func(ctx context.Context, prompt string) (<-chan providers.Msg, context.CancelFunc, error)

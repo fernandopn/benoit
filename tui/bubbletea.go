@@ -30,6 +30,7 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 	if provider == nil {
 		return errors.New("provider is required")
 	}
+	start := streamStartForProvider(provider, "")
 
 	cfg := bubbleteaui.Config{
 		ProviderName: provider.Name(),
@@ -41,7 +42,12 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 			if timeout > 0 {
 				streamCtx, cancel = context.WithTimeout(reqCtx, timeout)
 			}
-			return provider.Chat(streamCtx, prompt), cancel, nil
+			stream := start(streamCtx, prompt)
+			if stream == nil {
+				cancel()
+				return nil, func() {}, errors.New("provider stream is not configured")
+			}
+			return stream, cancel, nil
 		},
 	}
 
