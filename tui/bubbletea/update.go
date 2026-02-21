@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	tuicmd "github.com/fernandopn/benoit/tui/commands"
 )
 
 const (
@@ -81,7 +82,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			prompt := strings.TrimRight(raw, "\n")
-			if prompt == "/exit" || prompt == "/quit" {
+			if tuicmd.IsExit(prompt) {
 				m.cancelStreamIfAny()
 				return m, tea.Quit
 			}

@@ -5,6 +5,7 @@ import (
 	"errors"
 
 	"github.com/fernandopn/benoit/providers"
+	tuicmd "github.com/fernandopn/benoit/tui/commands"
 )
 
 const (
@@ -26,9 +27,9 @@ type commandSuggestion struct {
 }
 
 var knownSlashCommands = []commandSuggestion{
-	{Command: "/compress", Description: "compact context"},
-	{Command: "/exit", Description: "quit session"},
-	{Command: "/quit", Description: "quit session"},
+	{Command: tuicmd.CompressCommand, Description: "compact context"},
+	{Command: tuicmd.ExitCommand, Description: "quit session"},
+	{Command: tuicmd.QuitCommand, Description: "quit session"},
 }
 
 type StreamStarter func(ctx context.Context, prompt string) (<-chan providers.Msg, context.CancelFunc, error)

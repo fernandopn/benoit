@@ -1,7 +1,12 @@
 package tui
 
-import "github.com/google/uuid"
+import "github.com/fernandopn/benoit/sessionid"
 
-func newTUISessionID() string {
-	return uuid.NewString()
+func resolveTUISessionID(raw string) string {
+	resolved, err := sessionid.ResolveInteractive(raw)
+	if err != nil {
+		fallback, _ := sessionid.ResolveInteractive("")
+		return fallback
+	}
+	return resolved
 }

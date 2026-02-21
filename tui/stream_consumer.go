@@ -3,21 +3,17 @@ package tui
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/fernandopn/benoit/compression"
 	"github.com/fernandopn/benoit/providers"
+	tuicmd "github.com/fernandopn/benoit/tui/commands"
 	tuiutils "github.com/fernandopn/benoit/tui/utils"
 )
 
-const defaultCompressionMaxWords = 300
-const compressionFinishedMessage = "Context compression finished."
-
-type compressionStatusSentNotifier interface {
-	NotifyCompressionStatusSent(sessionID string)
-}
+const compressionFinishedMessage = providers.DefaultCompressionFinishedMessage
+const defaultCompressionMaxWords = tuicmd.DefaultCompressionMaxWords
 
 type streamStarter func(context.Context, string) <-chan providers.Msg
 
@@ -61,59 +57,21 @@ func startCommandStream(ctx context.Context, provider providers.Provider, sessio
 	go func() {
 		defer close(out)
 		compressor := compression.NewBasic(maxWords)
-		status := providers.Msg{}
-		compressCtx := providers.WithCompressionStatusTarget(ctx, &status)
-		summary, err := provider.PerformCompression(compressCtx, sessionID, compressor)
+		summary, status, err := providers.PerformCompressionWithStatus(ctx, provider, sessionID, compressor, compressionFinishedMessage)
 		if err != nil {
 			out <- providers.Msg{Type: providers.MsgTypeError, Value: err.Error()}
 			return
 		}
-		summary = strings.TrimSpace(summary)
-		if summary == "" {
-			out <- providers.Msg{Type: providers.MsgTypeError, Value: "compression returned empty summary"}
-			return
-		}
-		if status.Type != providers.MsgTypeCompressionStatus {
-			status = providers.Msg{Type: providers.MsgTypeCompressionStatus, Value: compressionFinishedMessage}
-		}
-		if strings.TrimSpace(status.Value) == "" {
-			status.Value = compressionFinishedMessage
-		}
 		out <- status
-		notifyCompressionStatusSent(provider, sessionID)
+		providers.NotifyCompressionStatusSent(provider, sessionID)
 		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: summary}
 		out <- providers.Msg{Type: providers.MsgTypeChatFinal, Value: summary}
 	}()
 	return out, true
 }
 
-func notifyCompressionStatusSent(provider providers.Provider, sessionID string) {
-	notifier, ok := provider.(compressionStatusSentNotifier)
-	if !ok {
-		return
-	}
-	notifier.NotifyCompressionStatusSent(sessionID)
-}
-
 func parseCompressCommand(prompt string) (int, bool, error) {
-	parts := strings.Fields(strings.TrimSpace(prompt))
-	if len(parts) == 0 {
-		return 0, false, nil
-	}
-	if strings.ToLower(parts[0]) != "/compress" {
-		return 0, false, nil
-	}
-	if len(parts) == 1 {
-		return defaultCompressionMaxWords, true, nil
-	}
-	if len(parts) != 2 {
-		return 0, true, errors.New("usage: /compress [max_words]")
-	}
-	maxWords, err := strconv.Atoi(strings.TrimSpace(parts[1]))
-	if err != nil || maxWords <= 0 {
-		return 0, true, errors.New("usage: /compress [max_words]")
-	}
-	return maxWords, true, nil
+	return tuicmd.ParseCompress(prompt)
 }
 
 func singleErrorStream(errText string) <-chan providers.Msg {

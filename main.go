@@ -16,6 +16,7 @@ import (
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
 	"github.com/fernandopn/benoit/session"
+	"github.com/fernandopn/benoit/sessionid"
 	"github.com/fernandopn/benoit/tools"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
@@ -154,22 +155,19 @@ func validateConfig(cfg Config) error {
 
 	switch cfg.Command {
 	case CommandTUI:
-		if strings.TrimSpace(cfg.Model) == "" {
-			return fmt.Errorf("flag error: model is required")
-		}
-		if strings.TrimSpace(cfg.Credentials.OpenAIAPIKey) == "" {
-			return fmt.Errorf("credential error: OPENAI_API_KEY is not set")
+		if err := validateProviderCommandConfig(cfg); err != nil {
+			return err
 		}
 		if cfg.Render != RenderSimple && cfg.Render != RenderBubbleTea {
 			return fmt.Errorf("flag error: invalid render mode %q", cfg.Render)
 		}
+		if err := sessionid.Validate(cfg.SessionID); err != nil {
+			return fmt.Errorf("flag error: invalid -session-id: %w", err)
+		}
 		return nil
 	case CommandChannelListener:
-		if strings.TrimSpace(cfg.Model) == "" {
-			return fmt.Errorf("flag error: model is required")
-		}
-		if strings.TrimSpace(cfg.Credentials.OpenAIAPIKey) == "" {
-			return fmt.Errorf("credential error: OPENAI_API_KEY is not set")
+		if err := validateProviderCommandConfig(cfg); err != nil {
+			return err
 		}
 		if cfg.Channel != ChannelTelegram {
 			return fmt.Errorf("flag error: invalid channel %q", cfg.Channel)
@@ -186,6 +184,16 @@ func validateConfig(cfg Config) error {
 	default:
 		return fmt.Errorf("flag error: invalid command %q", cfg.Command)
 	}
+}
+
+func validateProviderCommandConfig(cfg Config) error {
+	if strings.TrimSpace(cfg.Model) == "" {
+		return fmt.Errorf("flag error: model is required")
+	}
+	if strings.TrimSpace(cfg.Credentials.OpenAIAPIKey) == "" {
+		return fmt.Errorf("credential error: OPENAI_API_KEY is not set")
+	}
+	return nil
 }
 
 func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() error, error) {
@@ -227,27 +235,35 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 func runCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
 	switch cfg.Command {
 	case CommandTUI:
-		useSimpleMode := cfg.Render == RenderSimple
-		if err := tui.Run(ctx, provider, cfg.Timeout, useSimpleMode, strings.TrimSpace(cfg.SessionID)); err != nil {
-			return fmt.Errorf("tui error: %w", err)
-		}
-		return nil
+		return runTUICommand(ctx, cfg, provider)
 	case CommandChannelListener:
-		switch cfg.Channel {
-		case ChannelTelegram:
-			telegramClient, err := channels.NewTelegram(cfg.Credentials.TelegramBotToken, http.DefaultClient)
-			if err != nil {
-				return fmt.Errorf("telegram init error: %w", err)
-			}
-			if err := tui.RunTelegram(ctx, telegramClient, provider, cfg.Timeout, cfg.TelegramPollTimeoutSeconds, cfg.TelegramAllowedUserIDs); err != nil {
-				return fmt.Errorf("telegram listener error: %w", err)
-			}
-			return nil
-		default:
-			return fmt.Errorf("flag error: invalid channel %q", cfg.Channel)
-		}
+		return runChannelListenerCommand(ctx, cfg, provider)
 	default:
 		return fmt.Errorf("flag error: invalid command %q", cfg.Command)
+	}
+}
+
+func runTUICommand(ctx context.Context, cfg Config, provider providers.Provider) error {
+	useSimpleMode := cfg.Render == RenderSimple
+	if err := tui.Run(ctx, provider, cfg.Timeout, useSimpleMode, strings.TrimSpace(cfg.SessionID)); err != nil {
+		return fmt.Errorf("tui error: %w", err)
+	}
+	return nil
+}
+
+func runChannelListenerCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
+	switch cfg.Channel {
+	case ChannelTelegram:
+		telegramClient, err := channels.NewTelegram(cfg.Credentials.TelegramBotToken, http.DefaultClient)
+		if err != nil {
+			return fmt.Errorf("telegram init error: %w", err)
+		}
+		if err := tui.RunTelegram(ctx, telegramClient, provider, cfg.Timeout, cfg.TelegramPollTimeoutSeconds, cfg.TelegramAllowedUserIDs); err != nil {
+			return fmt.Errorf("telegram listener error: %w", err)
+		}
+		return nil
+	default:
+		return fmt.Errorf("flag error: invalid channel %q", cfg.Channel)
 	}
 }
 
@@ -373,20 +389,52 @@ func loadConfig(defaultRoot string, args []string) (Config, error) {
 	}
 }
 
-func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
-	flagSet := flag.NewFlagSet(string(CommandTUI), flag.ContinueOnError)
-	model := flagSet.String("model", "gpt-5.2", "model name")
-	timeout := flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
-	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	dbPath := flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence")
-	bypassCompressionBarrier := flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
-	renderRaw := flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
-	sessionID := flagSet.String("session-id", "", "resume an existing session ID")
+type sharedStorageFlags struct {
+	fsRoot *string
+	dbPath *string
+}
+
+type sharedProviderFlags struct {
+	storage                  sharedStorageFlags
+	model                    *string
+	timeout                  *time.Duration
+	bypassCompressionBarrier *bool
+}
+
+func bindStorageFlags(flagSet *flag.FlagSet, defaultRoot string) sharedStorageFlags {
+	return sharedStorageFlags{
+		fsRoot: flagSet.String("fs-root", defaultRoot, "filesystem root"),
+		dbPath: flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence"),
+	}
+}
+
+func bindProviderFlags(flagSet *flag.FlagSet, defaultRoot string) sharedProviderFlags {
+	storage := bindStorageFlags(flagSet, defaultRoot)
+	return sharedProviderFlags{
+		storage:                  storage,
+		model:                    flagSet.String("model", "gpt-5.2", "model name"),
+		timeout:                  flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)"),
+		bypassCompressionBarrier: flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware"),
+	}
+}
+
+func parseFlagSet(flagSet *flag.FlagSet, args []string) error {
 	if err := flagSet.Parse(args); err != nil {
-		return Config{}, err
+		return err
 	}
 	if len(flagSet.Args()) > 0 {
-		return Config{}, fmt.Errorf("flag error: unexpected positional arguments: %s", strings.Join(flagSet.Args(), " "))
+		return fmt.Errorf("flag error: unexpected positional arguments: %s", strings.Join(flagSet.Args(), " "))
+	}
+	return nil
+}
+
+func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
+	flagSet := flag.NewFlagSet(string(CommandTUI), flag.ContinueOnError)
+	shared := bindProviderFlags(flagSet, defaultRoot)
+	renderRaw := flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
+	sessionID := flagSet.String("session-id", "", "resume an existing session ID")
+	if err := parseFlagSet(flagSet, args); err != nil {
+		return Config{}, err
 	}
 	renderMode, err := parseRenderMode(*renderRaw)
 	if err != nil {
@@ -396,29 +444,22 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 		Command:                  CommandTUI,
 		Render:                   renderMode,
 		SessionID:                strings.TrimSpace(*sessionID),
-		Model:                    strings.TrimSpace(*model),
-		Timeout:                  *timeout,
-		FSRoot:                   strings.TrimSpace(*fsRoot),
-		DBPath:                   strings.TrimSpace(*dbPath),
-		BypassCompressionBarrier: *bypassCompressionBarrier,
+		Model:                    strings.TrimSpace(*shared.model),
+		Timeout:                  *shared.timeout,
+		FSRoot:                   strings.TrimSpace(*shared.storage.fsRoot),
+		DBPath:                   strings.TrimSpace(*shared.storage.dbPath),
+		BypassCompressionBarrier: *shared.bypassCompressionBarrier,
 	}, nil
 }
 
 func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error) {
 	flagSet := flag.NewFlagSet(string(CommandChannelListener), flag.ContinueOnError)
+	shared := bindProviderFlags(flagSet, defaultRoot)
 	channelRaw := flagSet.String("channel", defaultChannelMode, "channel listener type: telegram")
-	model := flagSet.String("model", "gpt-5.2", "model name")
-	timeout := flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
-	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	dbPath := flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence")
-	bypassCompressionBarrier := flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
 	telegramPollTimeoutSeconds := flagSet.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
 	telegramAllowedUsersRaw := flagSet.String("telegram-allowed-users", defaultTelegramAllowedUsers, "comma-separated Telegram user IDs allowed in telegram mode")
-	if err := flagSet.Parse(args); err != nil {
+	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
-	}
-	if len(flagSet.Args()) > 0 {
-		return Config{}, fmt.Errorf("flag error: unexpected positional arguments: %s", strings.Join(flagSet.Args(), " "))
 	}
 	channel, err := parseChannelMode(*channelRaw)
 	if err != nil {
@@ -435,11 +476,11 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	return Config{
 		Command:                    CommandChannelListener,
 		Channel:                    channel,
-		Model:                      strings.TrimSpace(*model),
-		Timeout:                    *timeout,
-		FSRoot:                     strings.TrimSpace(*fsRoot),
-		DBPath:                     strings.TrimSpace(*dbPath),
-		BypassCompressionBarrier:   *bypassCompressionBarrier,
+		Model:                      strings.TrimSpace(*shared.model),
+		Timeout:                    *shared.timeout,
+		FSRoot:                     strings.TrimSpace(*shared.storage.fsRoot),
+		DBPath:                     strings.TrimSpace(*shared.storage.dbPath),
+		BypassCompressionBarrier:   *shared.bypassCompressionBarrier,
 		TelegramPollTimeoutSeconds: *telegramPollTimeoutSeconds,
 		TelegramAllowedUserIDs:     allowedUsers,
 	}, nil
@@ -447,18 +488,14 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 
 func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 	flagSet := flag.NewFlagSet(string(CommandListSessions), flag.ContinueOnError)
-	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	dbPath := flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence")
-	if err := flagSet.Parse(args); err != nil {
+	storage := bindStorageFlags(flagSet, defaultRoot)
+	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
-	}
-	if len(flagSet.Args()) > 0 {
-		return Config{}, fmt.Errorf("flag error: unexpected positional arguments: %s", strings.Join(flagSet.Args(), " "))
 	}
 	return Config{
 		Command: CommandListSessions,
-		FSRoot:  strings.TrimSpace(*fsRoot),
-		DBPath:  strings.TrimSpace(*dbPath),
+		FSRoot:  strings.TrimSpace(*storage.fsRoot),
+		DBPath:  strings.TrimSpace(*storage.dbPath),
 	}, nil
 }
 

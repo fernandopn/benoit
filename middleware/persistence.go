@@ -9,10 +9,6 @@ import (
 	"github.com/fernandopn/benoit/providers"
 )
 
-type compressionStatusSentNotifier interface {
-	NotifyCompressionStatusSent(sessionID string)
-}
-
 type SessionStoreMiddleware struct {
 	provider     providers.Provider
 	store        persistence.SessionStore
@@ -51,12 +47,10 @@ func (m *SessionStoreMiddleware) PerformCompression(ctx context.Context, session
 }
 
 func (m *SessionStoreMiddleware) NotifyCompressionStatusSent(sessionID string) {
-	if notifier, ok := m.provider.(compressionStatusSentNotifier); ok {
-		if strings.TrimSpace(sessionID) == "" {
-			sessionID = m.sessionID
-		}
-		notifier.NotifyCompressionStatusSent(sessionID)
+	if strings.TrimSpace(sessionID) == "" {
+		sessionID = m.sessionID
 	}
+	providers.NotifyCompressionStatusSent(m.provider, sessionID)
 	m.syncSessionFromProvider(context.Background())
 }
 

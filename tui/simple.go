@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/providers"
+	tuicmd "github.com/fernandopn/benoit/tui/commands"
 	simpleui "github.com/fernandopn/benoit/tui/simple"
 	tuiutils "github.com/fernandopn/benoit/tui/utils"
 	"golang.org/x/term"
@@ -27,10 +28,7 @@ func RunSimple(provider providers.Provider, timeout time.Duration, sessionID str
 	writer := bufio.NewWriter(os.Stdout)
 	colors := newSimpleTheme(term.IsTerminal(int(os.Stdout.Fd())))
 	width := simpleTerminalWidth()
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		sessionID = newTUISessionID()
-	}
+	sessionID = resolveTUISessionID(sessionID)
 	start := streamStartForProvider(provider, sessionID)
 
 	writeSimpleHeader(writer, colors, provider.Name(), width)
@@ -54,7 +52,7 @@ func RunSimple(provider providers.Provider, timeout time.Duration, sessionID str
 			}
 			continue
 		}
-		if strings.TrimSpace(text) == "/exit" || strings.TrimSpace(text) == "/quit" {
+		if tuicmd.IsExit(text) {
 			return
 		}
 

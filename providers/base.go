@@ -2,8 +2,11 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"strings"
 )
+
+const DefaultCompressionFinishedMessage = "Context compression finished."
 
 type MsgType int
 
@@ -66,6 +69,12 @@ type Compressor interface {
 	Compress(ctx context.Context, provider Provider, sessionID string) (string, error)
 }
 
+// CompressionStatusSentNotifier allows providers/middleware to clear
+// compression-related barriers once the status message was delivered.
+type CompressionStatusSentNotifier interface {
+	NotifyCompressionStatusSent(sessionID string)
+}
+
 type compressionStatusTargetKey struct{}
 type sessionIDContextKey struct{}
 
@@ -123,6 +132,50 @@ type Provider interface {
 	ListModels(ctx context.Context) ([]string, error)
 	// Name returns the provider display name.
 	Name() string
+}
+
+func PerformCompressionWithStatus(ctx context.Context, provider Provider, sessionID string, compressor Compressor, fallbackStatus string) (string, Msg, error) {
+	if ctx == nil {
+		return "", Msg{}, errors.New("context is required")
+	}
+	if provider == nil {
+		return "", Msg{}, errors.New("provider is required")
+	}
+	if compressor == nil {
+		return "", Msg{}, errors.New("compressor is required")
+	}
+
+	fallbackStatus = strings.TrimSpace(fallbackStatus)
+	if fallbackStatus == "" {
+		fallbackStatus = DefaultCompressionFinishedMessage
+	}
+
+	status := Msg{}
+	summary, err := provider.PerformCompression(WithCompressionStatusTarget(ctx, &status), sessionID, compressor)
+	if err != nil {
+		return "", Msg{}, err
+	}
+
+	summary = strings.TrimSpace(summary)
+	if summary == "" {
+		return "", Msg{}, errors.New("compression returned empty summary")
+	}
+
+	if status.Type != MsgTypeCompressionStatus {
+		status = Msg{Type: MsgTypeCompressionStatus, Value: fallbackStatus}
+	}
+	if strings.TrimSpace(status.Value) == "" {
+		status.Value = fallbackStatus
+	}
+	return summary, status, nil
+}
+
+func NotifyCompressionStatusSent(provider Provider, sessionID string) {
+	notifier, ok := provider.(CompressionStatusSentNotifier)
+	if !ok {
+		return
+	}
+	notifier.NotifyCompressionStatusSent(strings.TrimSpace(sessionID))
 }
 
 // SessionCursorProvider exposes mutable session response cursor so

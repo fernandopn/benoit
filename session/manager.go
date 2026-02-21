@@ -201,11 +201,7 @@ func (r *routerProvider) NotifyCompressionStatusSent(sessionID string) {
 	if err != nil {
 		return
 	}
-	notifier, ok := provider.(interface{ NotifyCompressionStatusSent(sessionID string) })
-	if !ok {
-		return
-	}
-	notifier.NotifyCompressionStatusSent(sessionID)
+	providers.NotifyCompressionStatusSent(provider, sessionID)
 }
 
 func (r *routerProvider) resolveSessionID(ctx context.Context, explicit string) string {

@@ -2,12 +2,10 @@ package persistence
 
 import (
 	"context"
-	"strings"
 
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/sessionid"
 )
-
-const defaultSessionID = "__default__"
 
 type SessionState struct {
 	Provider           providers.ProviderType
@@ -26,9 +24,5 @@ type SessionStore interface {
 }
 
 func NormalizeSessionID(sessionID string) string {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return defaultSessionID
-	}
-	return sessionID
+	return sessionid.Normalize(sessionID)
 }

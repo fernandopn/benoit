@@ -244,6 +244,35 @@ func TestSelectedTools(t *testing.T) {
 	})
 }
 
+func TestValidateConfigSessionID(t *testing.T) {
+	cfg := Config{
+		Command: CommandTUI,
+		Render:  RenderSimple,
+		Model:   "gpt-5.2",
+		Credentials: CredentialConfig{
+			OpenAIAPIKey: "key",
+		},
+	}
+
+	t.Run("valid session id", func(t *testing.T) {
+		cfg.SessionID = "session-1"
+		if err := validateConfig(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid session id", func(t *testing.T) {
+		cfg.SessionID = "bad\nline"
+		err := validateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), "-session-id") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
 func toolNames(toolSet []tools.Tool) []string {
 	names := make([]string, 0, len(toolSet))
 	for _, tool := range toolSet {

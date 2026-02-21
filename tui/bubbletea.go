@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,10 +30,7 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 	if provider == nil {
 		return errors.New("provider is required")
 	}
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		sessionID = newTUISessionID()
-	}
+	sessionID = resolveTUISessionID(sessionID)
 	start := streamStartForProvider(provider, sessionID)
 
 	cfg := bubbleteaui.Config{
