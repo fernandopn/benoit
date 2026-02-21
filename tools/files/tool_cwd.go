@@ -32,6 +32,7 @@ func (c *CurrentDirectoryTool) Definition() responses.ToolUnionParam {
 			Parameters: map[string]any{
 				"type":                 "object",
 				"properties":           map[string]any{},
+				"required":             []string{},
 				"additionalProperties": false,
 			},
 			Strict: openai.Bool(true),

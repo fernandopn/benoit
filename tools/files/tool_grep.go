@@ -53,7 +53,7 @@ func (g *GrepTool) Definition() responses.ToolUnionParam {
 				"required":             []string{patternArgName},
 				"additionalProperties": false,
 			},
-			Strict: openai.Bool(true),
+			Strict: openai.Bool(false),
 		},
 	}
 }
