@@ -1,3 +1,5 @@
-history.db
+# sql Databases
 *.db
-*.sqlite
+
+# Data folder
+data/

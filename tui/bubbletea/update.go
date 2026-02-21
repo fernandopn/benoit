@@ -30,6 +30,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp, cmd = m.vp.Update(msg)
 			cmds = append(cmds, cmd)
 		}
+		if isMouseEscapeKey(typed) {
+			return m, batchCmds(cmds)
+		}
 		handled, keyCmd := m.handleCommandKey(typed)
 		if handled {
 			cmds = append(cmds, keyCmd)
@@ -42,6 +45,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.commandSuggestionsShown && m.input.Value() != beforeInput {
 			m.hideCommandSuggestions()
 		}
+	case tea.MouseMsg:
+		m.vp, cmd = m.vp.Update(msg)
+		cmds = append(cmds, cmd)
 	default:
 		m.vp, cmd = m.vp.Update(msg)
 		cmds = append(cmds, cmd)

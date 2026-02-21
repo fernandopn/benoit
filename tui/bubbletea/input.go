@@ -20,6 +20,45 @@ func isScrollKey(msg tea.KeyMsg) bool {
 	}
 }
 
+func isMouseEscapeKey(msg tea.KeyMsg) bool {
+	if msg.Type != tea.KeyRunes || len(msg.Runes) == 0 {
+		return false
+	}
+
+	raw := string(msg.Runes)
+	if strings.ContainsRune(raw, '\x1b') {
+		seq := raw[strings.IndexRune(raw, '\x1b'):]
+		if looksLikeMouseCSI(seq) {
+			return true
+		}
+	}
+
+	if looksLikeMouseCSI(raw) {
+		return true
+	}
+
+	return false
+}
+
+func looksLikeMouseCSI(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	raw = strings.TrimPrefix(raw, "\x1b")
+
+	if strings.HasPrefix(raw, "[M") && len(raw) >= 6 {
+		return true
+	}
+	if strings.HasPrefix(raw, "[<") && strings.Count(raw, ";") >= 2 {
+		last := raw[len(raw)-1]
+		if last == 'M' || last == 'm' {
+			return true
+		}
+	}
+	return false
+}
+
 func batchCmds(cmds []tea.Cmd) tea.Cmd {
 	if len(cmds) == 0 {
 		return nil
