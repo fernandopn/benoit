@@ -101,6 +101,12 @@ func RunSimple(provider providers.Provider, timeout time.Duration) {
 				}
 				writer.Flush()
 			},
+			OnCompressionStatus: func(value string, metadata map[string]string) {
+				_ = metadata
+				switchState(providers.MsgTypeCompressionStatus)
+				fmt.Fprintln(writer, colors.Style(value, colors.FGAccent, colors.Dim))
+				writer.Flush()
+			},
 			OnError: func(errText string) {
 				hadError = true
 				fmt.Fprintln(os.Stderr, colors.Style("request error:", colors.Bold, colors.FGWarn), errText)

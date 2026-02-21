@@ -75,6 +75,11 @@ func (m *model) applyStreamMessages(msgs []providers.Msg) {
 			m.appendToolResult(msg.Value, msg.Metadata)
 		case providers.MsgTypeContextUsage:
 			m.updateContextUsage(msg.Value, msg.Metadata)
+		case providers.MsgTypeCompressionStatus:
+			status := strings.TrimSpace(msg.Value)
+			if status != "" {
+				m.appendBlock(blockSystem, status, msg.Metadata)
+			}
 		case providers.MsgTypeError:
 			errText := strings.TrimSpace(msg.Value)
 			if errText == "" {

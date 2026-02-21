@@ -13,7 +13,27 @@ const (
 	MsgTypeToolCall
 	MsgTypeToolResult
 	MsgTypeContextUsage
+	MsgTypeCompressionStatus
 )
+
+var msgTypeStorageValue = map[MsgType]string{
+	MsgTypeChatDelta:             "chat_delta",
+	MsgTypeChatFinal:             "chat_final",
+	MsgTypeReasoningSummaryDelta: "reasoning_summary_delta",
+	MsgTypeReasoningSummaryFinal: "reasoning_summary_final",
+	MsgTypeError:                 "error",
+	MsgTypeToolCall:              "tool_call",
+	MsgTypeToolResult:            "tool_result",
+	MsgTypeContextUsage:          "context_usage",
+	MsgTypeCompressionStatus:     "compression_status",
+}
+
+func (msgType MsgType) StorageValue() string {
+	if value, ok := msgTypeStorageValue[msgType]; ok {
+		return value
+	}
+	return "unknown"
+}
 
 // Msg represents a message emitted by a provider.
 type Msg struct {
@@ -25,6 +45,31 @@ type Msg struct {
 // Compressor produces a compressed summary for a provider session.
 type Compressor interface {
 	Compress(ctx context.Context, provider Provider, sessionID string) (string, error)
+}
+
+type compressionStatusTargetKey struct{}
+
+// WithCompressionStatusTarget attaches a destination message pointer where
+// providers can write a compression status message when available.
+func WithCompressionStatusTarget(ctx context.Context, target *Msg) context.Context {
+	if ctx == nil || target == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, compressionStatusTargetKey{}, target)
+}
+
+// SetCompressionStatus writes a compression status message into the target
+// configured on the context, returning true when written.
+func SetCompressionStatus(ctx context.Context, msg Msg) bool {
+	if ctx == nil {
+		return false
+	}
+	target, ok := ctx.Value(compressionStatusTargetKey{}).(*Msg)
+	if !ok || target == nil {
+		return false
+	}
+	*target = msg
+	return true
 }
 
 // Provider abstracts the chat interaction for a model backend.

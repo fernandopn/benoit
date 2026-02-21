@@ -10,7 +10,11 @@ func ContextLeftPercent(value string, meta map[string]string) (float64, bool) {
 		return 100 - percentUsed, true
 	}
 	if meta != nil {
-		used, usedOK := parseFloatLoose(meta["tokens_used"])
+		usedText := strings.TrimSpace(meta["tokens_input_used"])
+		if usedText == "" {
+			usedText = meta["tokens_used"]
+		}
+		used, usedOK := parseFloatLoose(usedText)
 		avail, availOK := parseFloatLoose(meta["tokens_available"])
 		if usedOK && availOK {
 			if avail <= 0 {

@@ -302,6 +302,37 @@ func TestEmitFinalStreamMessagesFallsBackToDeltas(t *testing.T) {
 	}
 }
 
+func TestOpenAIContextUsageMsgUsesInputTokens(t *testing.T) {
+	provider := &OpenAI{maxContextTokens: 1000}
+	response := responseWithUsage(t, "resp-usage", 123, 45, 168)
+
+	msg := provider.contextUsageMsg(response)
+	if msg == nil {
+		t.Fatal("expected context usage message")
+	}
+	if msg.Type != MsgTypeContextUsage {
+		t.Fatalf("unexpected message type: %v", msg.Type)
+	}
+	if msg.Value != "12.3%" {
+		t.Fatalf("unexpected context usage value: %q", msg.Value)
+	}
+	if got := msg.Metadata["tokens_used"]; got != "123" {
+		t.Fatalf("unexpected tokens_used: %q", got)
+	}
+	if got := msg.Metadata["tokens_input_used"]; got != "123" {
+		t.Fatalf("unexpected tokens_input_used: %q", got)
+	}
+	if got := msg.Metadata["tokens_output_used"]; got != "45" {
+		t.Fatalf("unexpected tokens_output_used: %q", got)
+	}
+	if got := msg.Metadata["tokens_total_used"]; got != "168" {
+		t.Fatalf("unexpected tokens_total_used: %q", got)
+	}
+	if got := msg.Metadata["tokens_available"]; got != "1000" {
+		t.Fatalf("unexpected tokens_available: %q", got)
+	}
+}
+
 type scriptedResponseStream struct {
 	events []responses.ResponseStreamEventUnion
 	idx    int
@@ -359,6 +390,36 @@ func completedEvent(id string) responses.ResponseStreamEventUnion {
 	return responses.ResponseStreamEventUnion{Type: "response.completed", Response: responses.Response{ID: id}}
 }
 
+func completedEventWithUsage(t *testing.T, id string, inputTokens, outputTokens, totalTokens int64) responses.ResponseStreamEventUnion {
+	t.Helper()
+	raw := fmt.Sprintf(`{"type":"response.completed","response":{"id":%q,"object":"response","output":[],"usage":{"input_tokens":%d,"input_tokens_details":{"cached_tokens":0},"output_tokens":%d,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":%d}}}`,
+		id,
+		inputTokens,
+		outputTokens,
+		totalTokens,
+	)
+	var event responses.ResponseStreamEventUnion
+	if err := json.Unmarshal([]byte(raw), &event); err != nil {
+		t.Fatalf("unmarshal completed event with usage: %v", err)
+	}
+	return event
+}
+
+func responseWithUsage(t *testing.T, id string, inputTokens, outputTokens, totalTokens int64) *responses.Response {
+	t.Helper()
+	raw := fmt.Sprintf(`{"id":%q,"object":"response","output":[],"usage":{"input_tokens":%d,"input_tokens_details":{"cached_tokens":0},"output_tokens":%d,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":%d}}`,
+		id,
+		inputTokens,
+		outputTokens,
+		totalTokens,
+	)
+	var response responses.Response
+	if err := json.Unmarshal([]byte(raw), &response); err != nil {
+		t.Fatalf("unmarshal response with usage: %v", err)
+	}
+	return &response
+}
+
 type scriptedCompressor struct {
 	prompt string
 }
@@ -414,22 +475,25 @@ func TestOpenAIPerformCompressionResetsAndSeedsSession(t *testing.T) {
 	client := &scriptedOpenAIClient{streams: []responseStream{
 		&scriptedResponseStream{events: []responses.ResponseStreamEventUnion{
 			outputDeltaEvent("compressed summary"),
-			completedEvent("resp-compress"),
+			completedEventWithUsage(t, "resp-compress", 28000, 900, 28900),
 		}},
 		&scriptedResponseStream{events: []responses.ResponseStreamEventUnion{
 			outputDeltaEvent("OK"),
-			completedEvent("resp-seed"),
+			completedEventWithUsage(t, "resp-seed", 24000, 120, 24120),
 		}},
 	}}
 	provider := &OpenAI{
-		client:     client,
-		state:      newOpenAIState(),
-		model:      "gpt-5.2",
-		toolRunner: parallelToolRunner{},
+		client:           client,
+		state:            newOpenAIState(),
+		model:            "gpt-5.2",
+		maxContextTokens: 400000,
+		toolRunner:       parallelToolRunner{},
 	}
 	provider.state.set("session-1", "prev-1")
+	statusMsg := Msg{}
+	ctx := WithCompressionStatusTarget(context.Background(), &statusMsg)
 
-	summary, err := provider.PerformCompression(context.Background(), "session-1", scriptedCompressor{prompt: "compress to 80 words"})
+	summary, err := provider.PerformCompression(ctx, "session-1", scriptedCompressor{prompt: "compress to 80 words"})
 	if err != nil {
 		t.Fatalf("unexpected compression error: %v", err)
 	}
@@ -438,6 +502,24 @@ func TestOpenAIPerformCompressionResetsAndSeedsSession(t *testing.T) {
 	}
 	if got := provider.state.get("session-1"); got != "resp-seed" {
 		t.Fatalf("expected seeded response id, got %q", got)
+	}
+	if statusMsg.Type != MsgTypeCompressionStatus {
+		t.Fatalf("expected compression status message, got %#v", statusMsg)
+	}
+	if statusMsg.Value != "Context compressed from 28000 (93.0% left) to 24000 (94.0% left)." {
+		t.Fatalf("unexpected compression status text: %q", statusMsg.Value)
+	}
+	if statusMsg.Metadata["from_tokens_used"] != "28000" {
+		t.Fatalf("unexpected from_tokens_used: %q", statusMsg.Metadata["from_tokens_used"])
+	}
+	if statusMsg.Metadata["to_tokens_used"] != "24000" {
+		t.Fatalf("unexpected to_tokens_used: %q", statusMsg.Metadata["to_tokens_used"])
+	}
+	if statusMsg.Metadata["from_left_percent"] != "93.0" {
+		t.Fatalf("unexpected from_left_percent: %q", statusMsg.Metadata["from_left_percent"])
+	}
+	if statusMsg.Metadata["to_left_percent"] != "94.0" {
+		t.Fatalf("unexpected to_left_percent: %q", statusMsg.Metadata["to_left_percent"])
 	}
 
 	if len(client.params) != 2 {

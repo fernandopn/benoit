@@ -109,21 +109,20 @@ func (s *openAIState) set(sessionID string, id string) {
 		return
 	}
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.previousBySession == nil {
 		s.previousBySession = map[string]string{}
 	}
 	s.previousBySession[normalizeSessionID(sessionID)] = id
-	s.mu.Unlock()
 }
 
 func (s *openAIState) reset(sessionID string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.previousBySession == nil {
-		s.mu.Unlock()
 		return
 	}
 	delete(s.previousBySession, normalizeSessionID(sessionID))
-	s.mu.Unlock()
 }
 
 func newOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
@@ -217,6 +216,106 @@ func (b *OpenAI) Name() string {
 	return fmt.Sprintf("OpenAI %s", b.model)
 }
 
+type compressionUsageSnapshot struct {
+	usedTokens      int64
+	availableTokens int64
+	hasValue        bool
+}
+
+func (s *compressionUsageSnapshot) capture(msg Msg) {
+	if msg.Type != MsgTypeContextUsage || msg.Metadata == nil {
+		return
+	}
+	usedRaw := strings.TrimSpace(msg.Metadata["tokens_input_used"])
+	if usedRaw == "" {
+		usedRaw = strings.TrimSpace(msg.Metadata["tokens_used"])
+	}
+	availableRaw := strings.TrimSpace(msg.Metadata["tokens_available"])
+	used, usedOK := parseInt64Loose(usedRaw)
+	available, availableOK := parseInt64Loose(availableRaw)
+	if !usedOK || !availableOK || available <= 0 || used < 0 {
+		return
+	}
+	s.usedTokens = used
+	s.availableTokens = available
+	s.hasValue = true
+}
+
+type compressionUsageCaptureProvider struct {
+	provider       Provider
+	onContextUsage func(Msg)
+}
+
+func (p compressionUsageCaptureProvider) Chat(ctx context.Context, input string) <-chan Msg {
+	return forwardStreamWithUsageCapture(p.provider.Chat(ctx, input), p.onContextUsage)
+}
+
+func (p compressionUsageCaptureProvider) PerformCompression(ctx context.Context, sessionID string, compressor Compressor) (string, error) {
+	return p.provider.PerformCompression(ctx, sessionID, compressor)
+}
+
+func (p compressionUsageCaptureProvider) ListModels(ctx context.Context) ([]string, error) {
+	return p.provider.ListModels(ctx)
+}
+
+func (p compressionUsageCaptureProvider) Name() string {
+	return p.provider.Name()
+}
+
+func (p compressionUsageCaptureProvider) ChatInSession(ctx context.Context, input string, sessionID string) <-chan Msg {
+	sessionProvider, ok := p.provider.(SessionProvider)
+	if !ok {
+		return p.Chat(ctx, input)
+	}
+	return forwardStreamWithUsageCapture(sessionProvider.ChatInSession(ctx, input, sessionID), p.onContextUsage)
+}
+
+func forwardStreamWithUsageCapture(in <-chan Msg, hook func(Msg)) <-chan Msg {
+	if in == nil {
+		return nil
+	}
+	out := make(chan Msg)
+	go func() {
+		defer close(out)
+		for msg := range in {
+			if hook != nil {
+				hook(msg)
+			}
+			out <- msg
+		}
+	}()
+	return out
+}
+
+func compressionStatusMsg(before compressionUsageSnapshot, after compressionUsageSnapshot) (Msg, bool) {
+	if !before.hasValue || !after.hasValue {
+		return Msg{}, false
+	}
+	beforeLeft, beforeOK := contextLeftPercent(before.usedTokens, before.availableTokens)
+	afterLeft, afterOK := contextLeftPercent(after.usedTokens, after.availableTokens)
+	if !beforeOK || !afterOK {
+		return Msg{}, false
+	}
+	return Msg{
+		Type: MsgTypeCompressionStatus,
+		Value: fmt.Sprintf(
+			"Context compressed from %d (%.1f%% left) to %d (%.1f%% left).",
+			before.usedTokens,
+			beforeLeft,
+			after.usedTokens,
+			afterLeft,
+		),
+		Metadata: map[string]string{
+			"from_tokens_used":      strconv.FormatInt(before.usedTokens, 10),
+			"from_tokens_available": strconv.FormatInt(before.availableTokens, 10),
+			"from_left_percent":     fmt.Sprintf("%.1f", beforeLeft),
+			"to_tokens_used":        strconv.FormatInt(after.usedTokens, 10),
+			"to_tokens_available":   strconv.FormatInt(after.availableTokens, 10),
+			"to_left_percent":       fmt.Sprintf("%.1f", afterLeft),
+		},
+	}, true
+}
+
 func (s *OpenAI) PerformCompression(ctx context.Context, sessionID string, compressor Compressor) (string, error) {
 	if ctx == nil {
 		return "", fmt.Errorf("context is required")
@@ -226,8 +325,10 @@ func (s *OpenAI) PerformCompression(ctx context.Context, sessionID string, compr
 	}
 
 	sessionID = normalizeSessionID(sessionID)
+	beforeUsage := compressionUsageSnapshot{}
+	captureProvider := compressionUsageCaptureProvider{provider: s, onContextUsage: beforeUsage.capture}
 	previousID := s.state.get(sessionID)
-	compressed, err := compressor.Compress(ctx, s, sessionID)
+	compressed, err := compressor.Compress(ctx, captureProvider, sessionID)
 	if err != nil {
 		s.state.reset(sessionID)
 		if previousID != "" {
@@ -237,27 +338,33 @@ func (s *OpenAI) PerformCompression(ctx context.Context, sessionID string, compr
 	}
 
 	s.state.reset(sessionID)
-	if err := s.seedCompressedContext(ctx, sessionID, compressed); err != nil {
+	afterUsage, err := s.seedCompressedContext(ctx, sessionID, compressed)
+	if err != nil {
 		s.state.reset(sessionID)
 		if previousID != "" {
 			s.state.set(sessionID, previousID)
 		}
 		return "", err
 	}
+	if statusMsg, ok := compressionStatusMsg(beforeUsage, afterUsage); ok {
+		SetCompressionStatus(ctx, statusMsg)
+	}
 	return compressed, nil
 }
 
-func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, compressed string) error {
+func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, compressed string) (compressionUsageSnapshot, error) {
+	usage := compressionUsageSnapshot{}
 	compressed = strings.TrimSpace(compressed)
 	if compressed == "" {
-		return fmt.Errorf("compressed context is empty")
+		return usage, fmt.Errorf("compressed context is empty")
 	}
 	seedPrompt := compressionSeedPromptPrefix + compressed
 	stream := s.ChatInSession(ctx, seedPrompt, sessionID)
 	if stream == nil {
-		return fmt.Errorf("provider returned nil stream while injecting compressed context")
+		return usage, fmt.Errorf("provider returned nil stream while injecting compressed context")
 	}
 	for msg := range stream {
+		usage.capture(msg)
 		if msg.Type != MsgTypeError {
 			continue
 		}
@@ -265,12 +372,12 @@ func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, co
 		if errText == "" {
 			errText = "provider returned an empty error"
 		}
-		return fmt.Errorf("compression injection failed: %s", errText)
+		return usage, fmt.Errorf("compression injection failed: %s", errText)
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return usage, err
 	}
-	return nil
+	return usage, nil
 }
 
 func (b *OpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {
@@ -360,16 +467,53 @@ func (b *OpenAI) contextTokensForModel(model string) int64 {
 	return 0
 }
 
-func (b *OpenAI) contextUsageMsg(resp *responses.Response) *Msg {
-	if resp == nil || !resp.JSON.Usage.Valid() {
-		return nil
+func parseInt64Loose(value string) (int64, bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0, false
 	}
-	used := resp.Usage.TotalTokens
-	if used <= 0 {
-		return nil
+	value = strings.ReplaceAll(value, ",", "")
+	num, err := strconv.ParseInt(value, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return num, true
+}
+
+func contextLeftPercent(usedTokens int64, availableTokens int64) (float64, bool) {
+	if availableTokens <= 0 || usedTokens < 0 {
+		return 0, false
+	}
+	left := ((float64(availableTokens) - float64(usedTokens)) / float64(availableTokens)) * 100
+	if left < 0 {
+		left = 0
+	}
+	if left > 100 {
+		left = 100
+	}
+	return left, true
+}
+
+func (b *OpenAI) contextUsageMetrics(resp *responses.Response) (int64, int64, int64, int64, bool) {
+	if resp == nil || !resp.JSON.Usage.Valid() {
+		return 0, 0, 0, 0, false
 	}
 	available := b.maxContextTokens
 	if available <= 0 {
+		return 0, 0, 0, 0, false
+	}
+	used := resp.Usage.InputTokens
+	if used < 0 {
+		return 0, 0, 0, 0, false
+	}
+	output := resp.Usage.OutputTokens
+	total := resp.Usage.TotalTokens
+	return used, available, output, total, true
+}
+
+func (b *OpenAI) contextUsageMsg(resp *responses.Response) *Msg {
+	used, available, output, total, ok := b.contextUsageMetrics(resp)
+	if !ok {
 		return nil
 	}
 	percentage := (float64(used) / float64(available)) * 100
@@ -377,8 +521,11 @@ func (b *OpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 		Type:  MsgTypeContextUsage,
 		Value: fmt.Sprintf("%.1f%%", percentage),
 		Metadata: map[string]string{
-			"tokens_used":      strconv.FormatInt(used, 10),
-			"tokens_available": strconv.FormatInt(available, 10),
+			"tokens_used":        strconv.FormatInt(used, 10),
+			"tokens_input_used":  strconv.FormatInt(used, 10),
+			"tokens_output_used": strconv.FormatInt(output, 10),
+			"tokens_total_used":  strconv.FormatInt(total, 10),
+			"tokens_available":   strconv.FormatInt(available, 10),
 		},
 	}
 }

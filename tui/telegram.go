@@ -202,6 +202,14 @@ func runTelegramPromptWithOutput(ctx context.Context, provider providers.Provide
 				}
 			}
 		},
+		OnCompressionStatus: func(value string, metadata map[string]string) {
+			_ = metadata
+			switchState(providers.MsgTypeCompressionStatus)
+			if writer != nil {
+				fmt.Fprintln(writer, colors.Style(value, colors.FGAccent, colors.Dim))
+				writer.Flush()
+			}
+		},
 		OnError: func(errText string) {
 			if writer != nil {
 				fmt.Fprintln(os.Stderr, colors.Style("request error:", colors.Bold, colors.FGWarn), errText)

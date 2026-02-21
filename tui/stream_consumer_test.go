@@ -18,6 +18,8 @@ type commandProviderStub struct {
 	performErr         error
 	performSummary     string
 	capturedCompPrompt string
+	hasCompressionStat bool
+	compressionStat    providers.Msg
 }
 
 func (p *commandProviderStub) Chat(_ context.Context, input string) <-chan providers.Msg {
@@ -38,6 +40,9 @@ func (p *commandProviderStub) PerformCompression(ctx context.Context, sessionID 
 	p.lastSessionID = sessionID
 	if p.performErr != nil {
 		return "", p.performErr
+	}
+	if p.hasCompressionStat {
+		providers.SetCompressionStatus(ctx, p.compressionStat)
 	}
 	if compressor != nil && p.performSummary == "" {
 		capture := &promptCaptureProvider{}
@@ -120,7 +125,18 @@ func TestParseCompressCommand(t *testing.T) {
 }
 
 func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
-	provider := &commandProviderStub{performSummary: "compressed summary"}
+	provider := &commandProviderStub{
+		performSummary:     "compressed summary",
+		hasCompressionStat: true,
+		compressionStat: providers.Msg{
+			Type:  providers.MsgTypeCompressionStatus,
+			Value: "Context compressed from 43200 (89.2% left) to 21000 (94.8% left).",
+			Metadata: map[string]string{
+				"from_tokens_used": "43200",
+				"to_tokens_used":   "21000",
+			},
+		},
+	}
 	start := streamStartForProvider(provider, "session-42")
 	msgs := collectMsgs(start(context.Background(), "/compress"))
 
@@ -133,14 +149,23 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 	if provider.lastSessionID != "session-42" {
 		t.Fatalf("unexpected session ID: %q", provider.lastSessionID)
 	}
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 stream messages, got %d", len(msgs))
+	if len(msgs) != 4 {
+		t.Fatalf("expected 4 stream messages, got %d", len(msgs))
 	}
-	if msgs[0].Type != providers.MsgTypeChatDelta || msgs[0].Value != "compressed summary" {
+	if msgs[0].Type != providers.MsgTypeCompressionStatus || msgs[0].Value != "Context compressed from 43200 (89.2% left) to 21000 (94.8% left)." {
 		t.Fatalf("unexpected first message: %#v", msgs[0])
 	}
-	if msgs[1].Type != providers.MsgTypeChatFinal || msgs[1].Value != "compressed summary" {
+	if msgs[0].Metadata["from_tokens_used"] != "43200" || msgs[0].Metadata["to_tokens_used"] != "21000" {
+		t.Fatalf("unexpected compression status metadata: %#v", msgs[0].Metadata)
+	}
+	if msgs[1].Type != providers.MsgTypeChatDelta || msgs[1].Value != compressionInitializedMessage {
 		t.Fatalf("unexpected second message: %#v", msgs[1])
+	}
+	if msgs[2].Type != providers.MsgTypeChatDelta || msgs[2].Value != "compressed summary" {
+		t.Fatalf("unexpected third message: %#v", msgs[2])
+	}
+	if msgs[3].Type != providers.MsgTypeChatFinal || msgs[3].Value != "compressed summary" {
+		t.Fatalf("unexpected fourth message: %#v", msgs[3])
 	}
 }
 
@@ -155,8 +180,17 @@ func TestStreamStartForProviderCompressParsesWordLimit(t *testing.T) {
 	if !strings.Contains(provider.capturedCompPrompt, "at most 123 words") {
 		t.Fatalf("unexpected compression prompt: %q", provider.capturedCompPrompt)
 	}
-	if len(msgs) != 2 {
-		t.Fatalf("expected 2 command messages, got %d", len(msgs))
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 command messages, got %d", len(msgs))
+	}
+	if msgs[0].Type != providers.MsgTypeChatDelta || msgs[0].Value != compressionInitializedMessage {
+		t.Fatalf("unexpected first command message: %#v", msgs[0])
+	}
+	if msgs[1].Type != providers.MsgTypeChatDelta || msgs[1].Value != "summary" {
+		t.Fatalf("unexpected second command message: %#v", msgs[1])
+	}
+	if msgs[2].Type != providers.MsgTypeChatFinal || msgs[2].Value != "summary" {
+		t.Fatalf("unexpected third command message: %#v", msgs[2])
 	}
 }
 

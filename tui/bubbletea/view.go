@@ -90,7 +90,10 @@ func (m *model) updateContextUsage(value string, meta map[string]string) {
 	if meta == nil {
 		return
 	}
-	m.contextTokensUsed = strings.TrimSpace(meta["tokens_used"])
+	m.contextTokensUsed = strings.TrimSpace(meta["tokens_input_used"])
+	if m.contextTokensUsed == "" {
+		m.contextTokensUsed = strings.TrimSpace(meta["tokens_used"])
+	}
 	m.contextTokensTotal = strings.TrimSpace(meta["tokens_available"])
 }
 

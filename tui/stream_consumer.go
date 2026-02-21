@@ -13,16 +13,18 @@ import (
 )
 
 const defaultCompressionMaxWords = 300
+const compressionInitializedMessage = "New context initialized with:\n"
 
 type streamStarter func(context.Context, string) <-chan providers.Msg
 
 type streamCallbacks struct {
-	OnChat         func(string)
-	OnReasoning    func(string)
-	OnToolCall     func(name string, args string, callID string)
-	OnToolResult   func(name string, args string, output string, callID string)
-	OnContextUsage func(value string, metadata map[string]string)
-	OnError        func(string)
+	OnChat              func(string)
+	OnReasoning         func(string)
+	OnToolCall          func(name string, args string, callID string)
+	OnToolResult        func(name string, args string, output string, callID string)
+	OnContextUsage      func(value string, metadata map[string]string)
+	OnCompressionStatus func(value string, metadata map[string]string)
+	OnError             func(string)
 }
 
 func streamStartForProvider(provider providers.Provider, sessionID string) streamStarter {
@@ -56,11 +58,13 @@ func startCommandStream(ctx context.Context, provider providers.Provider, sessio
 		return singleErrorStream(parseErr.Error()), true
 	}
 
-	out := make(chan providers.Msg, 2)
+	out := make(chan providers.Msg, 4)
 	go func() {
 		defer close(out)
 		compressor := compression.NewBasic(maxWords)
-		summary, err := provider.PerformCompression(ctx, sessionID, compressor)
+		status := providers.Msg{}
+		compressCtx := providers.WithCompressionStatusTarget(ctx, &status)
+		summary, err := provider.PerformCompression(compressCtx, sessionID, compressor)
 		if err != nil {
 			out <- providers.Msg{Type: providers.MsgTypeError, Value: err.Error()}
 			return
@@ -70,6 +74,10 @@ func startCommandStream(ctx context.Context, provider providers.Provider, sessio
 			out <- providers.Msg{Type: providers.MsgTypeError, Value: "compression returned empty summary"}
 			return
 		}
+		if status.Type == providers.MsgTypeCompressionStatus {
+			out <- status
+		}
+		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: compressionInitializedMessage}
 		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: summary}
 		out <- providers.Msg{Type: providers.MsgTypeChatFinal, Value: summary}
 	}()
@@ -184,6 +192,10 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 		case providers.MsgTypeContextUsage:
 			if callbacks.OnContextUsage != nil {
 				callbacks.OnContextUsage(msg.Value, msg.Metadata)
+			}
+		case providers.MsgTypeCompressionStatus:
+			if callbacks.OnCompressionStatus != nil {
+				callbacks.OnCompressionStatus(msg.Value, msg.Metadata)
 			}
 		case providers.MsgTypeError:
 			errText := strings.TrimSpace(msg.Value)

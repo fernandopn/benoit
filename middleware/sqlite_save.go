@@ -210,31 +210,8 @@ func (s *SQLiteSave) storeReceived(ctx context.Context, msg providers.Msg) error
 		}
 	}
 	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (msg_type, value, metadata) VALUES (?, ?, ?)`,
-		msgTypeString(msg.Type), msg.Value, metadata)
+		msg.Type.StorageValue(), msg.Value, metadata)
 	return err
-}
-
-func msgTypeString(msgType providers.MsgType) string {
-	switch msgType {
-	case providers.MsgTypeChatDelta:
-		return "chat_delta"
-	case providers.MsgTypeChatFinal:
-		return "chat_final"
-	case providers.MsgTypeReasoningSummaryDelta:
-		return "reasoning_summary_delta"
-	case providers.MsgTypeReasoningSummaryFinal:
-		return "reasoning_summary_final"
-	case providers.MsgTypeError:
-		return "error"
-	case providers.MsgTypeToolCall:
-		return "tool_call"
-	case providers.MsgTypeToolResult:
-		return "tool_result"
-	case providers.MsgTypeContextUsage:
-		return "context_usage"
-	default:
-		return "unknown"
-	}
 }
 
 func storageErrorMsg(phase string, err error) providers.Msg {
