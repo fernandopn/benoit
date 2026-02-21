@@ -18,19 +18,6 @@ type PersistTrace struct {
 	db           *bun.DB
 }
 
-func ConfigurePersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (providers.Provider, func() error, error) {
-	if db == nil {
-		return provider, nil, nil
-	}
-
-	traceProvider, err := NewPersistTrace(ctx, provider, providerType, sessionID, db)
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return traceProvider, traceProvider.Close, nil
-}
-
 func NewPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (*PersistTrace, error) {
 	if provider == nil {
 		return nil, errors.New("provider is required")
@@ -38,14 +25,6 @@ func NewPersistTrace(ctx context.Context, provider providers.Provider, providerT
 	if db == nil {
 		return nil, errors.New("db is required")
 	}
-	trace, err := newPersistTrace(ctx, provider, providerType, sessionID, db)
-	if err != nil {
-		return nil, err
-	}
-	return trace, nil
-}
-
-func newPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (*PersistTrace, error) {
 	if err := persistence.EnsureTraceMessageSchema(ctx, db); err != nil {
 		return nil, err
 	}

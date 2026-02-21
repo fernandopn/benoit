@@ -117,20 +117,20 @@ func (f *providerFactory) createProvider(sessionID string) (providers.Provider, 
 	var provider providers.Provider = openAIProvider
 	provider = middleware.NewSessionStoreMiddleware(provider, f.sessionStore, f.provider, sessionID)
 
-	provider, closeTrace, err := middleware.ConfigurePersistTrace(f.ctx, provider, f.provider, sessionID, f.cfg.DB)
-	if err != nil {
-		return nil, nil, err
+	if f.cfg.DB != nil {
+		traceProvider, traceErr := middleware.NewPersistTrace(f.ctx, provider, f.provider, sessionID, f.cfg.DB)
+		if traceErr != nil {
+			return nil, nil, traceErr
+		}
+		provider = traceProvider
 	}
 	if !f.cfg.BypassCompressionBarrier {
 		provider, err = middleware.NewCompressionBarrier(provider)
 		if err != nil {
-			if closeTrace != nil {
-				_ = closeTrace()
-			}
 			return nil, nil, err
 		}
 	}
-	return provider, closeTrace, nil
+	return provider, nil, nil
 }
 
 func (f *providerFactory) Close() error {

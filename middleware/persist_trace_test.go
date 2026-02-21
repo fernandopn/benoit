@@ -128,22 +128,15 @@ func TestPersistTracePropagatesStorageErrors(t *testing.T) {
 	}
 }
 
-func TestConfigurePersistTrace(t *testing.T) {
-	t.Run("nil db disables middleware", func(t *testing.T) {
-		base := &persistTraceStubProvider{}
-		configured, closeFn, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", nil)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if configured != base {
-			t.Fatalf("expected original provider to be returned, got %#v", configured)
-		}
-		if closeFn != nil {
-			t.Fatal("expected nil close function")
+func TestNewPersistTrace(t *testing.T) {
+	t.Run("requires db", func(t *testing.T) {
+		_, err := NewPersistTrace(context.Background(), &persistTraceStubProvider{}, providers.ProviderTypeOpenAI, "session-1", nil)
+		if err == nil {
+			t.Fatal("expected db error")
 		}
 	})
 
-	t.Run("shared db wraps provider", func(t *testing.T) {
+	t.Run("returns middleware", func(t *testing.T) {
 		base := &persistTraceStubProvider{}
 		db, closeDB, err := persistence.ConfigureDB(context.Background(), filepath.Join(t.TempDir(), "chat.db"))
 		if err != nil {
@@ -152,18 +145,15 @@ func TestConfigurePersistTrace(t *testing.T) {
 		if closeDB != nil {
 			defer closeDB()
 		}
-		configured, closeFn, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", db)
+		configured, err := NewPersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", db)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
-		if configured == base {
-			t.Fatal("expected middleware wrapper, got base provider")
+		if configured == nil {
+			t.Fatal("expected middleware instance")
 		}
-		if closeFn == nil {
-			t.Fatal("expected close function")
-		}
-		if err := closeFn(); err != nil {
-			t.Fatalf("close middleware error: %v", err)
+		if configured.provider != base {
+			t.Fatal("expected wrapped provider")
 		}
 	})
 }
