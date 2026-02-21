@@ -50,6 +50,19 @@ func TestLoadCredentials(t *testing.T) {
 		}
 	})
 
+	t.Run("telegram loaded outside telegram mode when available", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-key")
+		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
+		t.Setenv(matonAPIKeyEnv, "")
+		creds, err := loadCredentials(Config{Command: CommandTUI})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.TelegramBotToken != "telegram-key" {
+			t.Fatalf("expected telegram token to be loaded, got %q", creds.TelegramBotToken)
+		}
+	})
+
 	t.Run("trimmed values", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "  openai-key  ")
 		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
@@ -233,6 +246,57 @@ func TestSelectedTools(t *testing.T) {
 		}
 		names := toolNames(toolSet)
 		expected := []string{"code_interpreter", "web_search", "get_time", "maton_gcalendar", "maton_gmail"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with telegram", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "send_channel_message"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with telegram and maton", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI, Credentials: CredentialConfig{TelegramBotToken: "telegram-key", MatonAPIKey: "test-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "send_channel_message", "maton_gcalendar", "maton_gmail"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("telegram disabled on channel_listener", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandChannelListener, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}

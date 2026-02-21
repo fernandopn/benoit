@@ -351,21 +351,44 @@ func selectedTools(cfg Config) ([]tools.Tool, error) {
 		tools.NewClockTool(),
 	}
 
-	matonAPIKey := strings.TrimSpace(cfg.Credentials.MatonAPIKey)
-	if matonAPIKey == "" {
-		return toolSet, nil
-	}
-
-	matonClient, err := tools.NewMatonClient(matonAPIKey, http.DefaultClient)
+	channelBindings, err := configuredToolChannelBindings(cfg)
 	if err != nil {
 		return nil, err
 	}
-	toolSet = append(toolSet,
-		tools.NewMatonGCalendarTool(matonClient),
-		tools.NewMatonGmailTool(matonClient),
-	)
+	if len(channelBindings) > 0 {
+		toolSet = append(toolSet, tools.NewSendChannelMessageTool(channelBindings))
+	}
+
+	matonAPIKey := strings.TrimSpace(cfg.Credentials.MatonAPIKey)
+	if matonAPIKey != "" {
+		matonClient, err := tools.NewMatonClient(matonAPIKey, http.DefaultClient)
+		if err != nil {
+			return nil, err
+		}
+		toolSet = append(toolSet,
+			tools.NewMatonGCalendarTool(matonClient),
+			tools.NewMatonGmailTool(matonClient),
+		)
+	}
 
 	return toolSet, nil
+}
+
+func configuredToolChannelBindings(cfg Config) ([]tools.ChannelBinding, error) {
+	bindings := make([]tools.ChannelBinding, 0, 1)
+	if cfg.Command != CommandTUI {
+		return bindings, nil
+	}
+	telegramBotToken := strings.TrimSpace(cfg.Credentials.TelegramBotToken)
+	if telegramBotToken == "" {
+		return bindings, nil
+	}
+	telegramClient, err := channels.NewTelegram(telegramBotToken, http.DefaultClient)
+	if err != nil {
+		return nil, err
+	}
+	bindings = append(bindings, tools.ChannelBinding{Name: string(ChannelTelegram), Channel: telegramClient})
+	return bindings, nil
 }
 
 func loadConfig(defaultRoot string, args []string) (Config, error) {
@@ -499,7 +522,10 @@ func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 }
 
 func loadCredentials(cfg Config) (CredentialConfig, error) {
-	creds := CredentialConfig{MatonAPIKey: strings.TrimSpace(os.Getenv(matonAPIKeyEnv))}
+	creds := CredentialConfig{
+		TelegramBotToken: strings.TrimSpace(os.Getenv(telegramAPIKeyEnv)),
+		MatonAPIKey:      strings.TrimSpace(os.Getenv(matonAPIKeyEnv)),
+	}
 
 	if cfg.Command == CommandListSessions {
 		return creds, nil
@@ -511,12 +537,8 @@ func loadCredentials(cfg Config) (CredentialConfig, error) {
 	}
 	creds.OpenAIAPIKey = openAIAPIKey
 
-	if cfg.Command == CommandChannelListener && cfg.Channel == ChannelTelegram {
-		telegramBotToken, err := requiredEnv(telegramAPIKeyEnv)
-		if err != nil {
-			return CredentialConfig{}, fmt.Errorf("credential error: %w", err)
-		}
-		creds.TelegramBotToken = telegramBotToken
+	if cfg.Command == CommandChannelListener && cfg.Channel == ChannelTelegram && creds.TelegramBotToken == "" {
+		return CredentialConfig{}, fmt.Errorf("credential error: %s is not set", telegramAPIKeyEnv)
 	}
 
 	return creds, nil

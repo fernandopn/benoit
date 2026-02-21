@@ -74,8 +74,9 @@ official Go SDK.
 
 ## Behavior notes
 
-- Credentials are loaded in `main.go` during startup (`OPENAI_API_KEY`, optional `MATON_API_KEY`, and `TELEGRAM_API_KEY` for `channel_listener --channel telegram`).
-- Tools always enabled: `code_interpreter`, `web_search`.
+- Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
+- Tools always enabled: `code_interpreter`, `web_search`, `get_time`.
+- `send_channel_message` is enabled only in `tui` mode when `TELEGRAM_API_KEY` is set. It accepts `channel`, `user_id`, and `message`.
 - `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
 - `maton_gcalendar` `list_events` requires `query.timeMin` and `query.timeMax` (RFC3339) to keep event queries bounded.
 - When no TTY is detected for stdin/stdout, the app automatically uses
