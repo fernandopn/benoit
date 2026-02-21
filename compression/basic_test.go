@@ -38,25 +38,6 @@ func (p *providerStub) Name() string {
 	return "stub"
 }
 
-type sessionCall struct {
-	input     string
-	sessionID string
-}
-
-type sessionProviderStub struct {
-	providerStub
-	chatInSessionFunc func(context.Context, string, string) <-chan providers.Msg
-	sessionCalls      []sessionCall
-}
-
-func (s *sessionProviderStub) ChatInSession(ctx context.Context, input string, sessionID string) <-chan providers.Msg {
-	s.sessionCalls = append(s.sessionCalls, sessionCall{input: input, sessionID: sessionID})
-	if s.chatInSessionFunc == nil {
-		return nil
-	}
-	return s.chatInSessionFunc(ctx, input, sessionID)
-}
-
 func msgStream(msgs ...providers.Msg) <-chan providers.Msg {
 	out := make(chan providers.Msg, len(msgs))
 	for _, msg := range msgs {
@@ -104,39 +85,6 @@ func TestBasicCompressionUsesProviderChat(t *testing.T) {
 	}
 	if provider.chatInputs[0] != basicCompressionPrompt(42) {
 		t.Fatalf("unexpected chat prompt: %q", provider.chatInputs[0])
-	}
-}
-
-func TestBasicCompressionUsesSessionProviderAndTrimsSessionID(t *testing.T) {
-	provider := &sessionProviderStub{
-		providerStub: providerStub{chatFunc: func(context.Context, string) <-chan providers.Msg {
-			t.Fatal("expected ChatInSession to be used")
-			return nil
-		}},
-		chatInSessionFunc: func(context.Context, string, string) <-chan providers.Msg {
-			return msgStream(providers.Msg{Type: providers.MsgTypeChatFinal, Value: "session result"})
-		},
-	}
-
-	got, err := BasicCompression(context.Background(), provider, "  chat-123  ", 12)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got != "session result" {
-		t.Fatalf("expected session result, got %q", got)
-	}
-	if len(provider.sessionCalls) != 1 {
-		t.Fatalf("expected one ChatInSession call, got %d", len(provider.sessionCalls))
-	}
-	call := provider.sessionCalls[0]
-	if call.sessionID != "chat-123" {
-		t.Fatalf("expected trimmed session ID %q, got %q", "chat-123", call.sessionID)
-	}
-	if call.input != basicCompressionPrompt(12) {
-		t.Fatalf("unexpected session prompt: %q", call.input)
-	}
-	if len(provider.chatInputs) != 0 {
-		t.Fatalf("expected Chat not to be used, got %d calls", len(provider.chatInputs))
 	}
 }
 

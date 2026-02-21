@@ -252,20 +252,12 @@ func TestParseToolArgs(t *testing.T) {
 
 func TestOpenAIState(t *testing.T) {
 	state := newOpenAIState()
-	if state.get("") != "" {
+	if state.get() != "" {
 		t.Fatal("expected empty state")
 	}
-	state.set("", "abc")
-	if state.get("") != "abc" {
-		t.Fatalf("expected abc, got %q", state.get(""))
-	}
-
-	state.set("telegram:99", "id-99")
-	if state.get("telegram:99") != "id-99" {
-		t.Fatalf("expected id-99, got %q", state.get("telegram:99"))
-	}
-	if state.get("") != "abc" {
-		t.Fatalf("default session changed unexpectedly: %q", state.get(""))
+	state.set("abc")
+	if state.get() != "abc" {
+		t.Fatalf("expected abc, got %q", state.get())
 	}
 }
 
@@ -276,7 +268,7 @@ func TestEmitFinalStreamMessagesUsesCompletedResponse(t *testing.T) {
 	}}
 
 	out := make(chan Msg, 4)
-	emitFinalStreamMessages(out, resp, "hello delta", "reasoning delta")
+	emitFinalStreamMessages(out, resp, "hello delta", "reasoning delta", nil)
 
 	first := receiveMsg(t, out)
 	second := receiveMsg(t, out)
@@ -290,7 +282,7 @@ func TestEmitFinalStreamMessagesUsesCompletedResponse(t *testing.T) {
 
 func TestEmitFinalStreamMessagesFallsBackToDeltas(t *testing.T) {
 	out := make(chan Msg, 4)
-	emitFinalStreamMessages(out, nil, "hello delta", "reasoning delta")
+	emitFinalStreamMessages(out, nil, "hello delta", "reasoning delta", nil)
 
 	first := receiveMsg(t, out)
 	second := receiveMsg(t, out)
@@ -428,12 +420,8 @@ func (c scriptedCompressor) Compress(ctx context.Context, provider Provider, ses
 	if provider == nil {
 		return "", errors.New("provider is required")
 	}
-	var stream <-chan Msg
-	if sessionProvider, ok := provider.(SessionProvider); ok {
-		stream = sessionProvider.ChatInSession(ctx, c.prompt, sessionID)
-	} else {
-		stream = provider.Chat(ctx, c.prompt)
-	}
+	streamCtx := WithSessionID(ctx, sessionID)
+	stream := provider.Chat(streamCtx, c.prompt)
 	var (
 		delta strings.Builder
 		final strings.Builder
@@ -485,11 +473,12 @@ func TestOpenAIPerformCompressionResetsAndSeedsSession(t *testing.T) {
 	provider := &OpenAI{
 		client:           client,
 		state:            newOpenAIState(),
+		sessionID:        "session-1",
 		model:            "gpt-5.2",
 		maxContextTokens: 400000,
 		toolRunner:       parallelToolRunner{},
 	}
-	provider.state.set("session-1", "prev-1")
+	provider.state.set("prev-1")
 	statusMsg := Msg{}
 	ctx := WithCompressionStatusTarget(context.Background(), &statusMsg)
 
@@ -500,7 +489,7 @@ func TestOpenAIPerformCompressionResetsAndSeedsSession(t *testing.T) {
 	if summary != "compressed summary" {
 		t.Fatalf("unexpected compressed summary: %q", summary)
 	}
-	if got := provider.state.get("session-1"); got != "resp-seed" {
+	if got := provider.state.get(); got != "resp-seed" {
 		t.Fatalf("expected seeded response id, got %q", got)
 	}
 	if statusMsg.Type != MsgTypeCompressionStatus {
@@ -562,10 +551,11 @@ func TestOpenAIPerformCompressionRestoresStateOnInjectionFailure(t *testing.T) {
 	provider := &OpenAI{
 		client:     client,
 		state:      newOpenAIState(),
+		sessionID:  "session-1",
 		model:      "gpt-5.2",
 		toolRunner: parallelToolRunner{},
 	}
-	provider.state.set("session-1", "prev-1")
+	provider.state.set("prev-1")
 
 	_, err := provider.PerformCompression(context.Background(), "session-1", scriptedCompressor{prompt: "compress to 60 words"})
 	if err == nil {
@@ -574,7 +564,7 @@ func TestOpenAIPerformCompressionRestoresStateOnInjectionFailure(t *testing.T) {
 	if !strings.Contains(err.Error(), "compression injection failed") {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if got := provider.state.get("session-1"); got != "prev-1" {
+	if got := provider.state.get(); got != "prev-1" {
 		t.Fatalf("expected previous state to be restored, got %q", got)
 	}
 }
@@ -589,16 +579,17 @@ func TestOpenAIPerformCompressionRestoresStateOnCompressorFailure(t *testing.T) 
 	provider := &OpenAI{
 		client:     client,
 		state:      newOpenAIState(),
+		sessionID:  "session-1",
 		model:      "gpt-5.2",
 		toolRunner: parallelToolRunner{},
 	}
-	provider.state.set("session-1", "prev-1")
+	provider.state.set("prev-1")
 
 	_, err := provider.PerformCompression(context.Background(), "session-1", failingAfterStreamCompressor{prompt: "compress prompt"})
 	if err == nil {
 		t.Fatal("expected compressor error")
 	}
-	if got := provider.state.get("session-1"); got != "prev-1" {
+	if got := provider.state.get(); got != "prev-1" {
 		t.Fatalf("expected previous state to be restored after compressor failure, got %q", got)
 	}
 	if len(client.params) != 1 {

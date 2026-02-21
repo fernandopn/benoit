@@ -25,6 +25,9 @@ type telegramProviderStub struct {
 func (p *telegramProviderStub) Chat(ctx context.Context, input string) <-chan providers.Msg {
 	p.mu.Lock()
 	p.inputs = append(p.inputs, input)
+	if sessionID := providers.SessionIDFromContext(ctx); sessionID != "" {
+		p.sessions = append(p.sessions, sessionID)
+	}
 	outputs := append([]providers.Msg(nil), p.outputs...)
 	p.mu.Unlock()
 
@@ -58,13 +61,6 @@ func (p *telegramProviderStub) ListModels(ctx context.Context) ([]string, error)
 
 func (p *telegramProviderStub) Name() string {
 	return "telegram-provider"
-}
-
-func (p *telegramProviderStub) ChatInSession(ctx context.Context, input string, sessionID string) <-chan providers.Msg {
-	p.mu.Lock()
-	p.sessions = append(p.sessions, sessionID)
-	p.mu.Unlock()
-	return p.Chat(ctx, input)
 }
 
 func TestRunTelegramAggregatesChatAndReplies(t *testing.T) {

@@ -24,8 +24,10 @@ official Go SDK.
 - `-fs-root`
   - filesystem root passed to filesystem-backed tools
   - default: current working directory
-- `-db-path`
-  - enable sqlite logging of conversation messages
+- `-trace_provider_db`
+  - enable sqlite trace logging of provider stream messages
+- `-session-db-path`
+  - enable sqlite persistence of per-session provider state
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
   - default: `false`

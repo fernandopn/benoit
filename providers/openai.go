@@ -62,28 +62,33 @@ const compressionSeedPromptPrefix = "Treat the following compressed context as a
 type OpenAI struct {
 	client           openAIClient
 	state            *openAIState
+	sessionID        string
 	model            string
 	maxContextTokens int64
-	params           OpenAIParams
+	params           OpenAIProviderParams
 	toolDefs         []responses.ToolUnionParam
 	toolMap          map[string]tools.Tool
 	toolRunner       toolRunner
 }
 
-type OpenAIParams struct {
-	ReasoningEffort  shared.ReasoningEffort
-	ReasoningSummary shared.ReasoningSummary
+type OpenAIProviderParams struct {
+	ReasoningEffort    shared.ReasoningEffort
+	ReasoningSummary   shared.ReasoningSummary
+	SessionID          string
+	PreviousResponseID string
 }
+
+type OpenAIParams = OpenAIProviderParams
 
 const defaultOpenAISessionID = "__default__"
 
 type openAIState struct {
-	mu                sync.Mutex
-	previousBySession map[string]string
+	mu                 sync.Mutex
+	previousResponseID string
 }
 
 func newOpenAIState() *openAIState {
-	return &openAIState{previousBySession: map[string]string{}}
+	return &openAIState{}
 }
 
 func normalizeSessionID(sessionID string) string {
@@ -94,38 +99,29 @@ func normalizeSessionID(sessionID string) string {
 	return sessionID
 }
 
-func (s *openAIState) get(sessionID string) string {
+func (s *openAIState) get() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.previousBySession == nil {
-		return ""
-	}
-	return s.previousBySession[normalizeSessionID(sessionID)]
+	return s.previousResponseID
 }
 
-func (s *openAIState) set(sessionID string, id string) {
+func (s *openAIState) set(id string) {
 	id = strings.TrimSpace(id)
 	if id == "" {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.previousBySession == nil {
-		s.previousBySession = map[string]string{}
-	}
-	s.previousBySession[normalizeSessionID(sessionID)] = id
+	s.previousResponseID = id
 }
 
-func (s *openAIState) reset(sessionID string) {
+func (s *openAIState) reset() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.previousBySession == nil {
-		return
-	}
-	delete(s.previousBySession, normalizeSessionID(sessionID))
+	s.previousResponseID = ""
 }
 
-func newOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
+func newOpenAI(model string, apiKey string, params OpenAIProviderParams, toolSet []tools.Tool) (*OpenAI, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil, fmt.Errorf("api key is required")
@@ -138,10 +134,12 @@ func newOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools
 	provider := &OpenAI{
 		client:     newOpenAIClientAdapter(apiKey),
 		state:      newOpenAIState(),
+		sessionID:  normalizeSessionID(params.SessionID),
 		model:      model,
 		toolRunner: parallelToolRunner{},
 		params:     params,
 	}
+	provider.state.set(params.PreviousResponseID)
 	provider.maxContextTokens = provider.contextTokensForModel(provider.model)
 	if err := provider.initTools(toolSet); err != nil {
 		return nil, err
@@ -216,6 +214,26 @@ func (b *OpenAI) Name() string {
 	return fmt.Sprintf("OpenAI %s", b.model)
 }
 
+func (b *OpenAI) ProviderType() ProviderType {
+	return ProviderTypeOpenAI
+}
+
+func (b *OpenAI) SessionID() string {
+	return b.sessionID
+}
+
+func (s *OpenAI) PreviousResponseID() string {
+	return s.state.get()
+}
+
+func (s *OpenAI) SetPreviousResponseID(previousResponseID string) {
+	previousResponseID = strings.TrimSpace(previousResponseID)
+	if previousResponseID == "" {
+		return
+	}
+	s.state.set(previousResponseID)
+}
+
 type compressionUsageSnapshot struct {
 	usedTokens      int64
 	availableTokens int64
@@ -260,14 +278,6 @@ func (p compressionUsageCaptureProvider) ListModels(ctx context.Context) ([]stri
 
 func (p compressionUsageCaptureProvider) Name() string {
 	return p.provider.Name()
-}
-
-func (p compressionUsageCaptureProvider) ChatInSession(ctx context.Context, input string, sessionID string) <-chan Msg {
-	sessionProvider, ok := p.provider.(SessionProvider)
-	if !ok {
-		return p.Chat(ctx, input)
-	}
-	return forwardStreamWithUsageCapture(sessionProvider.ChatInSession(ctx, input, sessionID), p.onContextUsage)
 }
 
 func forwardStreamWithUsageCapture(in <-chan Msg, hook func(Msg)) <-chan Msg {
@@ -324,47 +334,60 @@ func (s *OpenAI) PerformCompression(ctx context.Context, sessionID string, compr
 		return "", fmt.Errorf("compressor is required")
 	}
 
-	sessionID = normalizeSessionID(sessionID)
+	_ = sessionID
+	sessionID = s.sessionID
 	beforeUsage := compressionUsageSnapshot{}
 	captureProvider := compressionUsageCaptureProvider{provider: s, onContextUsage: beforeUsage.capture}
-	previousID := s.state.get(sessionID)
+	previousID := s.state.get()
 	compressed, err := compressor.Compress(ctx, captureProvider, sessionID)
 	if err != nil {
-		s.state.reset(sessionID)
+		s.state.reset()
 		if previousID != "" {
-			s.state.set(sessionID, previousID)
+			s.state.set(previousID)
 		}
 		return "", err
 	}
 
-	s.state.reset(sessionID)
-	afterUsage, err := s.seedCompressedContext(ctx, sessionID, compressed)
+	s.state.reset()
+	afterUsage, seededResponseID, err := s.seedCompressedContext(ctx, sessionID, compressed)
 	if err != nil {
-		s.state.reset(sessionID)
+		s.state.reset()
 		if previousID != "" {
-			s.state.set(sessionID, previousID)
+			s.state.set(previousID)
 		}
 		return "", err
 	}
 	if statusMsg, ok := compressionStatusMsg(beforeUsage, afterUsage); ok {
+		if seededResponseID = strings.TrimSpace(seededResponseID); seededResponseID != "" {
+			if statusMsg.Metadata == nil {
+				statusMsg.Metadata = map[string]string{}
+			}
+			statusMsg.Metadata["response_id"] = seededResponseID
+		}
 		SetCompressionStatus(ctx, statusMsg)
 	}
 	return compressed, nil
 }
 
-func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, compressed string) (compressionUsageSnapshot, error) {
+func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, compressed string) (compressionUsageSnapshot, string, error) {
 	usage := compressionUsageSnapshot{}
+	seededResponseID := ""
 	compressed = strings.TrimSpace(compressed)
 	if compressed == "" {
-		return usage, fmt.Errorf("compressed context is empty")
+		return usage, seededResponseID, fmt.Errorf("compressed context is empty")
 	}
 	seedPrompt := compressionSeedPromptPrefix + compressed
-	stream := s.ChatInSession(ctx, seedPrompt, sessionID)
+	stream := s.Chat(ctx, seedPrompt)
 	if stream == nil {
-		return usage, fmt.Errorf("provider returned nil stream while injecting compressed context")
+		return usage, seededResponseID, fmt.Errorf("provider returned nil stream while injecting compressed context")
 	}
 	for msg := range stream {
 		usage.capture(msg)
+		if msg.Type == MsgTypeChatFinal {
+			if responseID := strings.TrimSpace(msg.Metadata["response_id"]); responseID != "" {
+				seededResponseID = responseID
+			}
+		}
 		if msg.Type != MsgTypeError {
 			continue
 		}
@@ -372,12 +395,12 @@ func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, co
 		if errText == "" {
 			errText = "provider returned an empty error"
 		}
-		return usage, fmt.Errorf("compression injection failed: %s", errText)
+		return usage, seededResponseID, fmt.Errorf("compression injection failed: %s", errText)
 	}
 	if err := ctx.Err(); err != nil {
-		return usage, err
+		return usage, seededResponseID, err
 	}
-	return usage, nil
+	return usage, seededResponseID, nil
 }
 
 func (b *OpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Response, out chan<- Msg) (responses.ResponseInputParam, error) {
@@ -539,7 +562,7 @@ func (b *OpenAI) emitContextUsage(resp *responses.Response, out chan<- Msg) {
 	}
 }
 
-func NewOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools.Tool) (*OpenAI, error) {
+func NewOpenAI(model string, apiKey string, params OpenAIProviderParams, toolSet []tools.Tool) (*OpenAI, error) {
 	provider, err := newOpenAI(model, apiKey, params, toolSet)
 	if err != nil {
 		return nil, err
@@ -548,19 +571,15 @@ func NewOpenAI(model string, apiKey string, params OpenAIParams, toolSet []tools
 }
 
 func (s *OpenAI) Chat(ctx context.Context, input string) <-chan Msg {
-	return s.ChatInSession(ctx, input, "")
-}
-
-func (s *OpenAI) ChatInSession(ctx context.Context, input string, sessionID string) <-chan Msg {
 	out := make(chan Msg)
-	sessionID = normalizeSessionID(sessionID)
 
 	go func() {
 		defer close(out)
 
-		params := s.buildParams(input, s.state.get(sessionID))
+		requestPreviousID := s.state.get()
+		params := s.buildParams(input, requestPreviousID)
 		for {
-			response, err := s.streamResponse(ctx, params, out)
+			response, err := s.streamResponse(ctx, params, out, requestPreviousID)
 			if err != nil {
 				out <- Msg{Type: MsgTypeError, Value: err.Error()}
 				return
@@ -569,7 +588,7 @@ func (s *OpenAI) ChatInSession(ctx context.Context, input string, sessionID stri
 				return
 			}
 			if response.ID != "" {
-				s.state.set(sessionID, response.ID)
+				s.state.set(response.ID)
 			}
 			toolOutputs, err := s.toolOutputsFromResponse(ctx, response, out)
 			if err != nil {
@@ -580,14 +599,15 @@ func (s *OpenAI) ChatInSession(ctx context.Context, input string, sessionID stri
 			if len(toolOutputs) == 0 {
 				return
 			}
-			params = s.buildToolParams(response.ID, toolOutputs)
+			requestPreviousID = strings.TrimSpace(response.ID)
+			params = s.buildToolParams(requestPreviousID, toolOutputs)
 		}
 	}()
 
 	return out
 }
 
-func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg) (*responses.Response, error) {
+func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNewParams, out chan<- Msg, previousResponseID string) (*responses.Response, error) {
 	stream := s.client.NewStreamingResponse(ctx, params)
 	var (
 		completed      *responses.Response
@@ -613,16 +633,16 @@ func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNe
 		return completed, err
 	}
 
-	emitFinalStreamMessages(out, completed, chatDelta.String(), reasoningDelta.String())
+	emitFinalStreamMessages(out, completed, chatDelta.String(), reasoningDelta.String(), s.finalMessageMetadata(completed, previousResponseID))
 	return completed, nil
 }
 
-func emitFinalStreamMessages(out chan<- Msg, completed *responses.Response, chatDelta string, reasoningDelta string) {
-	emitFinalMessage(out, MsgTypeChatFinal, responseChatText(completed), chatDelta)
-	emitFinalMessage(out, MsgTypeReasoningSummaryFinal, responseReasoningSummaryText(completed), reasoningDelta)
+func emitFinalStreamMessages(out chan<- Msg, completed *responses.Response, chatDelta string, reasoningDelta string, chatMetadata map[string]string) {
+	emitFinalMessage(out, MsgTypeChatFinal, responseChatText(completed), chatDelta, chatMetadata)
+	emitFinalMessage(out, MsgTypeReasoningSummaryFinal, responseReasoningSummaryText(completed), reasoningDelta, nil)
 }
 
-func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fallback string) {
+func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fallback string, metadata map[string]string) {
 	value := explicit
 	if strings.TrimSpace(value) == "" {
 		value = fallback
@@ -630,7 +650,41 @@ func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fall
 	if strings.TrimSpace(value) == "" {
 		return
 	}
-	out <- Msg{Type: messageType, Value: value}
+	out <- Msg{Type: messageType, Value: value, Metadata: copyMsgMetadata(metadata)}
+}
+
+func (s *OpenAI) finalMessageMetadata(resp *responses.Response, previousResponseID string) map[string]string {
+	metadata := map[string]string{}
+	if resp != nil {
+		if responseID := strings.TrimSpace(resp.ID); responseID != "" {
+			metadata["response_id"] = responseID
+		}
+		if used, available, _, _, ok := s.contextUsageMetrics(resp); ok {
+			remaining := available - used
+			if remaining < 0 {
+				remaining = 0
+			}
+			metadata["tokens_remaining"] = strconv.FormatInt(remaining, 10)
+		}
+	}
+	if previousResponseID = strings.TrimSpace(previousResponseID); previousResponseID != "" {
+		metadata["previous_response_id"] = previousResponseID
+	}
+	if len(metadata) == 0 {
+		return nil
+	}
+	return metadata
+}
+
+func copyMsgMetadata(metadata map[string]string) map[string]string {
+	if len(metadata) == 0 {
+		return nil
+	}
+	cloned := make(map[string]string, len(metadata))
+	for key, value := range metadata {
+		cloned[key] = value
+	}
+	return cloned
 }
 
 func responseChatText(resp *responses.Response) string {

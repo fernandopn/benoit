@@ -36,13 +36,8 @@ func streamStartForProvider(provider providers.Provider, sessionID string) strea
 		return nil
 	}
 	sessionID = strings.TrimSpace(sessionID)
-	startChat := provider.Chat
-	if sessionID != "" {
-		if sessionProvider, ok := provider.(providers.SessionProvider); ok {
-			startChat = func(ctx context.Context, prompt string) <-chan providers.Msg {
-				return sessionProvider.ChatInSession(ctx, prompt, sessionID)
-			}
-		}
+	startChat := func(ctx context.Context, prompt string) <-chan providers.Msg {
+		return provider.Chat(providers.WithSessionID(ctx, sessionID), prompt)
 	}
 
 	return func(ctx context.Context, prompt string) <-chan providers.Msg {

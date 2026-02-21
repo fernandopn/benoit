@@ -10,19 +10,11 @@ import (
 
 type compressionBarrierStubProvider struct {
 	chatMsgs       []providers.Msg
-	sessionMsgs    map[string][]providers.Msg
 	performSummary string
 	performErr     error
 }
 
 func (s *compressionBarrierStubProvider) Chat(_ context.Context, _ string) <-chan providers.Msg {
-	return compressionBarrierStream(s.chatMsgs...)
-}
-
-func (s *compressionBarrierStubProvider) ChatInSession(_ context.Context, _ string, sessionID string) <-chan providers.Msg {
-	if msgs, ok := s.sessionMsgs[sessionID]; ok {
-		return compressionBarrierStream(msgs...)
-	}
 	return compressionBarrierStream(s.chatMsgs...)
 }
 
@@ -79,12 +71,10 @@ func TestCompressionBarrierPassThroughWhenNotBlocked(t *testing.T) {
 }
 
 func TestCompressionBarrierBlocksFinalAndDeltaAfterCompression(t *testing.T) {
-	base := &compressionBarrierStubProvider{sessionMsgs: map[string][]providers.Msg{
-		"session-1": {
-			{Type: providers.MsgTypeChatDelta, Value: "hidden"},
-			{Type: providers.MsgTypeReasoningSummaryFinal, Value: "hidden reasoning"},
-			{Type: providers.MsgTypeToolResult, Value: "visible"},
-		},
+	base := &compressionBarrierStubProvider{chatMsgs: []providers.Msg{
+		{Type: providers.MsgTypeChatDelta, Value: "hidden"},
+		{Type: providers.MsgTypeReasoningSummaryFinal, Value: "hidden reasoning"},
+		{Type: providers.MsgTypeToolResult, Value: "visible"},
 	}}
 	barrier, err := NewCompressionBarrier(base)
 	if err != nil {
@@ -95,9 +85,9 @@ func TestCompressionBarrierBlocksFinalAndDeltaAfterCompression(t *testing.T) {
 		t.Fatalf("perform compression: %v", err)
 	}
 
-	got := collectBarrierMsgs(barrier.ChatInSession(context.Background(), "hello", "session-1"))
+	got := collectBarrierMsgs(barrier.Chat(context.Background(), "hello"))
 	if len(got) != 1 {
-		t.Fatalf("expected only one non-final/delta message, got %d", len(got))
+		t.Fatalf("expected one non-final/delta message, got %d", len(got))
 	}
 	if got[0].Type != providers.MsgTypeToolResult || got[0].Value != "visible" {
 		t.Fatalf("unexpected forwarded message: %#v", got[0])
@@ -105,11 +95,9 @@ func TestCompressionBarrierBlocksFinalAndDeltaAfterCompression(t *testing.T) {
 }
 
 func TestCompressionBarrierUnblocksWhenStatusSent(t *testing.T) {
-	base := &compressionBarrierStubProvider{sessionMsgs: map[string][]providers.Msg{
-		"session-1": {
-			{Type: providers.MsgTypeChatDelta, Value: "visible"},
-			{Type: providers.MsgTypeChatFinal, Value: "visible"},
-		},
+	base := &compressionBarrierStubProvider{chatMsgs: []providers.Msg{
+		{Type: providers.MsgTypeChatDelta, Value: "visible"},
+		{Type: providers.MsgTypeChatFinal, Value: "visible"},
 	}}
 	barrier, err := NewCompressionBarrier(base)
 	if err != nil {
@@ -121,7 +109,7 @@ func TestCompressionBarrierUnblocksWhenStatusSent(t *testing.T) {
 	}
 	barrier.NotifyCompressionStatusSent("session-1")
 
-	got := collectBarrierMsgs(barrier.ChatInSession(context.Background(), "hello", "session-1"))
+	got := collectBarrierMsgs(barrier.Chat(context.Background(), "hello"))
 	if len(got) != 2 {
 		t.Fatalf("expected 2 forwarded messages, got %d", len(got))
 	}
@@ -131,12 +119,10 @@ func TestCompressionBarrierUnblocksWhenStatusSent(t *testing.T) {
 }
 
 func TestCompressionBarrierStatusMessageInStreamUnblocks(t *testing.T) {
-	base := &compressionBarrierStubProvider{sessionMsgs: map[string][]providers.Msg{
-		"session-1": {
-			{Type: providers.MsgTypeCompressionStatus, Value: "done"},
-			{Type: providers.MsgTypeChatDelta, Value: "visible"},
-			{Type: providers.MsgTypeChatFinal, Value: "visible"},
-		},
+	base := &compressionBarrierStubProvider{chatMsgs: []providers.Msg{
+		{Type: providers.MsgTypeCompressionStatus, Value: "done"},
+		{Type: providers.MsgTypeChatDelta, Value: "visible"},
+		{Type: providers.MsgTypeChatFinal, Value: "visible"},
 	}}
 	barrier, err := NewCompressionBarrier(base)
 	if err != nil {
@@ -147,7 +133,7 @@ func TestCompressionBarrierStatusMessageInStreamUnblocks(t *testing.T) {
 		t.Fatalf("perform compression: %v", err)
 	}
 
-	got := collectBarrierMsgs(barrier.ChatInSession(context.Background(), "hello", "session-1"))
+	got := collectBarrierMsgs(barrier.Chat(context.Background(), "hello"))
 	if len(got) != 3 {
 		t.Fatalf("expected 3 forwarded messages, got %d", len(got))
 	}
@@ -173,30 +159,5 @@ func TestCompressionBarrierCompressionErrorClearsBlock(t *testing.T) {
 	got := collectBarrierMsgs(barrier.Chat(context.Background(), "hello"))
 	if len(got) != 1 || got[0].Type != providers.MsgTypeChatFinal {
 		t.Fatalf("expected chat final after failed compression, got %#v", got)
-	}
-}
-
-func TestCompressionBarrierSessionIsolation(t *testing.T) {
-	base := &compressionBarrierStubProvider{sessionMsgs: map[string][]providers.Msg{
-		"session-a": {{Type: providers.MsgTypeChatFinal, Value: "hidden"}},
-		"session-b": {{Type: providers.MsgTypeChatFinal, Value: "visible"}},
-	}}
-	barrier, err := NewCompressionBarrier(base)
-	if err != nil {
-		t.Fatalf("new barrier: %v", err)
-	}
-
-	if _, err := barrier.PerformCompression(context.Background(), "session-a", nil); err != nil {
-		t.Fatalf("perform compression: %v", err)
-	}
-
-	blocked := collectBarrierMsgs(barrier.ChatInSession(context.Background(), "hello", "session-a"))
-	if len(blocked) != 0 {
-		t.Fatalf("expected no forwarded final/delta messages for blocked session, got %#v", blocked)
-	}
-
-	visible := collectBarrierMsgs(barrier.ChatInSession(context.Background(), "hello", "session-b"))
-	if len(visible) != 1 || visible[0].Value != "visible" {
-		t.Fatalf("unexpected session-b messages: %#v", visible)
 	}
 }

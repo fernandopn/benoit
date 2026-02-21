@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -16,21 +17,25 @@ var isTerminalAvailable = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration) error {
-	return runBubbleTeaUI(ctx, provider, timeout)
+func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) error {
+	return runBubbleTeaUI(ctx, provider, timeout, sessionID)
 }
 
-var runSimpleUI = func(provider providers.Provider, timeout time.Duration) {
-	RunSimple(provider, timeout)
+var runSimpleUI = func(provider providers.Provider, timeout time.Duration, sessionID string) {
+	RunSimple(provider, timeout, sessionID)
 }
 
 var runBubbleTeaUI = runBubbleTea
 
-func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration) error {
+func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) error {
 	if provider == nil {
 		return errors.New("provider is required")
 	}
-	start := streamStartForProvider(provider, "")
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = newTUISessionID()
+	}
+	start := streamStartForProvider(provider, sessionID)
 
 	cfg := bubbleteaui.Config{
 		ProviderName: provider.Name(),
@@ -54,12 +59,12 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 	return bubbleteaui.Run(ctx, cfg, tea.WithAltScreen(), tea.WithMouseCellMotion())
 }
 
-func Run(ctx context.Context, provider providers.Provider, timeout time.Duration, useSimple bool) error {
+func Run(ctx context.Context, provider providers.Provider, timeout time.Duration, useSimple bool, sessionID string) error {
 	if shouldUseSimpleUI(useSimple) {
-		runSimpleUI(provider, timeout)
+		runSimpleUI(provider, timeout, sessionID)
 		return nil
 	}
-	return runBubbleTeaUI(ctx, provider, timeout)
+	return runBubbleTeaUI(ctx, provider, timeout, sessionID)
 }
 
 func shouldUseSimpleUI(forceSimple bool) bool {

@@ -24,17 +24,17 @@ type commandProviderStub struct {
 	compressionStat    providers.Msg
 }
 
-func (p *commandProviderStub) Chat(_ context.Context, input string) <-chan providers.Msg {
+func (p *commandProviderStub) Chat(ctx context.Context, input string) <-chan providers.Msg {
 	p.chatCalls++
+	if sessionID := providers.SessionIDFromContext(ctx); sessionID != "" {
+		p.sessionCalls++
+		p.lastSessionID = sessionID
+	}
 	p.lastPrompt = input
+	if p.lastSessionID != "" {
+		return testMsgStream(providers.Msg{Type: providers.MsgTypeChatFinal, Value: "session chat"})
+	}
 	return testMsgStream(providers.Msg{Type: providers.MsgTypeChatFinal, Value: "chat"})
-}
-
-func (p *commandProviderStub) ChatInSession(_ context.Context, input string, sessionID string) <-chan providers.Msg {
-	p.sessionCalls++
-	p.lastSessionID = sessionID
-	p.lastPrompt = input
-	return testMsgStream(providers.Msg{Type: providers.MsgTypeChatFinal, Value: "session chat"})
 }
 
 func (p *commandProviderStub) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
@@ -225,8 +225,8 @@ func TestStreamStartForProviderUsesSessionChatForPrompts(t *testing.T) {
 	if provider.performCalls != 0 {
 		t.Fatalf("did not expect compression call, got %d", provider.performCalls)
 	}
-	if provider.sessionCalls != 1 || provider.chatCalls != 0 {
-		t.Fatalf("expected one session chat and no direct chat, got session=%d chat=%d", provider.sessionCalls, provider.chatCalls)
+	if provider.sessionCalls != 1 || provider.chatCalls != 1 {
+		t.Fatalf("expected one session-routed chat call, got session=%d chat=%d", provider.sessionCalls, provider.chatCalls)
 	}
 	if provider.lastSessionID != "abc" {
 		t.Fatalf("unexpected session ID: %q", provider.lastSessionID)

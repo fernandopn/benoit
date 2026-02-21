@@ -44,7 +44,7 @@ func run(args []string) error {
 		return fmt.Errorf("%s is not set", openAIAPIKeyEnv)
 	}
 
-	provider, err := providers.NewOpenAI(cfg.model, apiKey, providers.OpenAIParams{}, nil)
+	provider, err := providers.NewOpenAI(cfg.model, apiKey, providers.OpenAIProviderParams{}, nil)
 	if err != nil {
 		return err
 	}

@@ -92,9 +92,7 @@ func (b Basic) Compress(ctx context.Context, provider providers.Provider, sessio
 }
 
 func startCompressionStream(ctx context.Context, provider providers.Provider, sessionID string, prompt string) <-chan providers.Msg {
-	if sessionProvider, ok := provider.(providers.SessionProvider); ok {
-		return sessionProvider.ChatInSession(ctx, prompt, sessionID)
-	}
+	_ = sessionID
 	return provider.Chat(ctx, prompt)
 }
 

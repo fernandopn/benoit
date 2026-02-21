@@ -10,7 +10,7 @@ import (
 func TestLoadCredentials(t *testing.T) {
 	t.Run("openai required", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "")
-		_, err := loadCredentials(ModeSimple)
+		_, err := loadCredentials(Config{Command: CommandTUI})
 		if err == nil {
 			t.Fatal("expected missing OPENAI_API_KEY error")
 		}
@@ -22,7 +22,7 @@ func TestLoadCredentials(t *testing.T) {
 	t.Run("telegram required in telegram mode", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
-		_, err := loadCredentials(ModeTelegram)
+		_, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram})
 		if err == nil {
 			t.Fatal("expected missing TELEGRAM_API_KEY error")
 		}
@@ -35,7 +35,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
 		t.Setenv(matonAPIKeyEnv, "")
-		creds, err := loadCredentials(ModeSimple)
+		creds, err := loadCredentials(Config{Command: CommandTUI})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +54,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "  openai-key  ")
 		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
 		t.Setenv(matonAPIKeyEnv, "  maton-key  ")
-		creds, err := loadCredentials(ModeTelegram)
+		creds, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -70,24 +70,23 @@ func TestLoadCredentials(t *testing.T) {
 	})
 }
 
-func TestParseTUIMode(t *testing.T) {
+func TestParseRenderMode(t *testing.T) {
 	tests := []struct {
 		name    string
 		raw     string
-		want    Mode
+		want    RenderMode
 		wantErr bool
 	}{
-		{name: "simple", raw: "simple", want: ModeSimple},
-		{name: "bubbletea", raw: "bubbletea", want: ModeBubbleTea},
-		{name: "telegram", raw: "telegram", want: ModeTelegram},
-		{name: "trimmed", raw: " bubbletea ", want: ModeBubbleTea},
-		{name: "case insensitive", raw: "SiMpLe", want: ModeSimple},
+		{name: "simple", raw: "simple", want: RenderSimple},
+		{name: "bubbletea", raw: "bubbletea", want: RenderBubbleTea},
+		{name: "trimmed", raw: " bubbletea ", want: RenderBubbleTea},
+		{name: "case insensitive", raw: "SiMpLe", want: RenderSimple},
 		{name: "invalid", raw: "nope", wantErr: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := parseTUIMode(tc.raw)
+			got, err := parseRenderMode(tc.raw)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("expected error for %q", tc.raw)
@@ -98,7 +97,39 @@ func TestParseTUIMode(t *testing.T) {
 				t.Fatalf("unexpected error: %v", err)
 			}
 			if got != tc.want {
-				t.Fatalf("parseTUIMode(%q) = %v, want %v", tc.raw, got, tc.want)
+				t.Fatalf("parseRenderMode(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseChannelMode(t *testing.T) {
+	tests := []struct {
+		name    string
+		raw     string
+		want    ChannelMode
+		wantErr bool
+	}{
+		{name: "telegram", raw: "telegram", want: ChannelTelegram},
+		{name: "trimmed", raw: " telegram ", want: ChannelTelegram},
+		{name: "case insensitive", raw: "TeLeGrAm", want: ChannelTelegram},
+		{name: "invalid", raw: "simple", wantErr: true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := parseChannelMode(tc.raw)
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("expected error for %q", tc.raw)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("parseChannelMode(%q) = %v, want %v", tc.raw, got, tc.want)
 			}
 		})
 	}
@@ -129,6 +160,40 @@ func TestParseTelegramAllowedUsers(t *testing.T) {
 		_, err := parseTelegramAllowedUsers("77,abc")
 		if err == nil {
 			t.Fatal("expected parse error")
+		}
+	})
+}
+
+func TestLoadConfigDefaultsSessionDBPath(t *testing.T) {
+	const root = "/tmp/benoit"
+
+	t.Run("tui", func(t *testing.T) {
+		cfg, err := loadTUIConfig(root, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.SessionDBPath != defaultSessionDBPath {
+			t.Fatalf("unexpected default session db path: %q", cfg.SessionDBPath)
+		}
+	})
+
+	t.Run("channel_listener", func(t *testing.T) {
+		cfg, err := loadChannelListenerConfig(root, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.SessionDBPath != defaultSessionDBPath {
+			t.Fatalf("unexpected default session db path: %q", cfg.SessionDBPath)
+		}
+	})
+
+	t.Run("list_sessions", func(t *testing.T) {
+		cfg, err := loadListSessionsConfig(root, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.SessionDBPath != defaultSessionDBPath {
+			t.Fatalf("unexpected default session db path: %q", cfg.SessionDBPath)
 		}
 	})
 }

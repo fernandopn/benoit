@@ -1,8 +1,27 @@
 package providers
 
-import "context"
+import (
+	"context"
+	"strings"
+)
 
 type MsgType int
+
+type ProviderType int
+
+const (
+	ProviderTypeUnknown ProviderType = iota
+	ProviderTypeOpenAI
+)
+
+func (providerType ProviderType) String() string {
+	switch providerType {
+	case ProviderTypeOpenAI:
+		return "openai"
+	default:
+		return "unknown"
+	}
+}
 
 const (
 	MsgTypeChatDelta MsgType = iota
@@ -48,6 +67,7 @@ type Compressor interface {
 }
 
 type compressionStatusTargetKey struct{}
+type sessionIDContextKey struct{}
 
 // WithCompressionStatusTarget attaches a destination message pointer where
 // providers can write a compression status message when available.
@@ -72,6 +92,27 @@ func SetCompressionStatus(ctx context.Context, msg Msg) bool {
 	return true
 }
 
+// WithSessionID attaches a logical session identifier to context.
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, sessionIDContextKey{}, sessionID)
+}
+
+// SessionIDFromContext returns the logical session identifier from context.
+func SessionIDFromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	value, _ := ctx.Value(sessionIDContextKey{}).(string)
+	return strings.TrimSpace(value)
+}
+
 // Provider abstracts the chat interaction for a model backend.
 type Provider interface {
 	// Chat returns a stream of messages. The stream is done when the channel closes.
@@ -84,9 +125,9 @@ type Provider interface {
 	Name() string
 }
 
-// SessionProvider extends Provider with explicit conversation session routing.
-type SessionProvider interface {
-	Provider
-	// ChatInSession runs chat in the provided logical session.
-	ChatInSession(ctx context.Context, input string, sessionID string) <-chan Msg
+// SessionCursorProvider exposes mutable session response cursor so
+// persistence middleware can hydrate and synchronize provider state.
+type SessionCursorProvider interface {
+	PreviousResponseID() string
+	SetPreviousResponseID(previousResponseID string)
 }

@@ -11,6 +11,7 @@ require (
 )
 
 require (
+	github.com/charmbracelet/harmonica v0.2.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
@@ -59,7 +60,7 @@ require (
 	github.com/yuin/goldmark-emoji v1.0.5 // indirect
 	golang.org/x/net v0.34.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/term v0.31.0 // indirect
+	golang.org/x/term v0.31.0
 	golang.org/x/text v0.31.0 // indirect
 	modernc.org/sqlite v1.29.0
 )

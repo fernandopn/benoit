@@ -22,11 +22,16 @@ type pendingToolCall struct {
 	args string
 }
 
-func RunSimple(provider providers.Provider, timeout time.Duration) {
+func RunSimple(provider providers.Provider, timeout time.Duration, sessionID string) {
 	reader := bufio.NewReader(os.Stdin)
 	writer := bufio.NewWriter(os.Stdout)
 	colors := newSimpleTheme(term.IsTerminal(int(os.Stdout.Fd())))
 	width := simpleTerminalWidth()
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = newTUISessionID()
+	}
+	start := streamStartForProvider(provider, sessionID)
 
 	writeSimpleHeader(writer, colors, provider.Name(), width)
 	writer.Flush()
@@ -71,7 +76,7 @@ func RunSimple(provider providers.Provider, timeout time.Duration) {
 			section = &tt
 		}
 
-		_, streamErr := streamPrompt(context.Background(), text, timeout, streamStartForProvider(provider, ""), streamCallbacks{
+		_, streamErr := streamPrompt(context.Background(), text, timeout, start, streamCallbacks{
 			OnChat: func(value string) {
 				switchState(providers.MsgTypeChatDelta)
 				fmt.Fprint(writer, colors.Style(value, colors.FGStrong))
