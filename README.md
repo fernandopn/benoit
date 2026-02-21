@@ -26,6 +26,9 @@ official Go SDK.
   - default: current working directory
 - `-db-path`
   - enable sqlite logging of conversation messages
+- `-bypass-compression-barrier`
+  - disable compression barrier middleware
+  - default: `false`
 - `-tui`
   - interface mode (`simple`, `bubbletea`, or `telegram`)
   - default: `simple`

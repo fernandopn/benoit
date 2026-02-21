@@ -13,7 +13,9 @@ type commandProviderStub struct {
 	chatCalls          int
 	sessionCalls       int
 	performCalls       int
+	notifyCalls        int
 	lastSessionID      string
+	notifySessionID    string
 	lastPrompt         string
 	performErr         error
 	performSummary     string
@@ -62,6 +64,11 @@ func (p *commandProviderStub) ListModels(_ context.Context) ([]string, error) {
 
 func (p *commandProviderStub) Name() string {
 	return "stub"
+}
+
+func (p *commandProviderStub) NotifyCompressionStatusSent(sessionID string) {
+	p.notifyCalls++
+	p.notifySessionID = sessionID
 }
 
 type promptCaptureProvider struct {
@@ -149,8 +156,8 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 	if provider.lastSessionID != "session-42" {
 		t.Fatalf("unexpected session ID: %q", provider.lastSessionID)
 	}
-	if len(msgs) != 4 {
-		t.Fatalf("expected 4 stream messages, got %d", len(msgs))
+	if len(msgs) != 3 {
+		t.Fatalf("expected 3 stream messages, got %d", len(msgs))
 	}
 	if msgs[0].Type != providers.MsgTypeCompressionStatus || msgs[0].Value != "Context compressed from 43200 (89.2% left) to 21000 (94.8% left)." {
 		t.Fatalf("unexpected first message: %#v", msgs[0])
@@ -158,14 +165,14 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 	if msgs[0].Metadata["from_tokens_used"] != "43200" || msgs[0].Metadata["to_tokens_used"] != "21000" {
 		t.Fatalf("unexpected compression status metadata: %#v", msgs[0].Metadata)
 	}
-	if msgs[1].Type != providers.MsgTypeChatDelta || msgs[1].Value != compressionInitializedMessage {
+	if msgs[1].Type != providers.MsgTypeChatDelta || msgs[1].Value != "compressed summary" {
 		t.Fatalf("unexpected second message: %#v", msgs[1])
 	}
-	if msgs[2].Type != providers.MsgTypeChatDelta || msgs[2].Value != "compressed summary" {
+	if msgs[2].Type != providers.MsgTypeChatFinal || msgs[2].Value != "compressed summary" {
 		t.Fatalf("unexpected third message: %#v", msgs[2])
 	}
-	if msgs[3].Type != providers.MsgTypeChatFinal || msgs[3].Value != "compressed summary" {
-		t.Fatalf("unexpected fourth message: %#v", msgs[3])
+	if provider.notifyCalls != 1 || provider.notifySessionID != "session-42" {
+		t.Fatalf("expected compression status notification for session-42, got calls=%d session=%q", provider.notifyCalls, provider.notifySessionID)
 	}
 }
 
@@ -183,7 +190,7 @@ func TestStreamStartForProviderCompressParsesWordLimit(t *testing.T) {
 	if len(msgs) != 3 {
 		t.Fatalf("expected 3 command messages, got %d", len(msgs))
 	}
-	if msgs[0].Type != providers.MsgTypeChatDelta || msgs[0].Value != compressionInitializedMessage {
+	if msgs[0].Type != providers.MsgTypeCompressionStatus || msgs[0].Value != compressionFinishedMessage {
 		t.Fatalf("unexpected first command message: %#v", msgs[0])
 	}
 	if msgs[1].Type != providers.MsgTypeChatDelta || msgs[1].Value != "summary" {
@@ -191,6 +198,9 @@ func TestStreamStartForProviderCompressParsesWordLimit(t *testing.T) {
 	}
 	if msgs[2].Type != providers.MsgTypeChatFinal || msgs[2].Value != "summary" {
 		t.Fatalf("unexpected third command message: %#v", msgs[2])
+	}
+	if provider.notifyCalls != 1 || provider.notifySessionID != "" {
+		t.Fatalf("expected compression status notification for default session, got calls=%d session=%q", provider.notifyCalls, provider.notifySessionID)
 	}
 }
 

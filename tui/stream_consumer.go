@@ -13,7 +13,11 @@ import (
 )
 
 const defaultCompressionMaxWords = 300
-const compressionInitializedMessage = "New context initialized with:\n"
+const compressionFinishedMessage = "Context compression finished."
+
+type compressionStatusSentNotifier interface {
+	NotifyCompressionStatusSent(sessionID string)
+}
 
 type streamStarter func(context.Context, string) <-chan providers.Msg
 
@@ -74,14 +78,26 @@ func startCommandStream(ctx context.Context, provider providers.Provider, sessio
 			out <- providers.Msg{Type: providers.MsgTypeError, Value: "compression returned empty summary"}
 			return
 		}
-		if status.Type == providers.MsgTypeCompressionStatus {
-			out <- status
+		if status.Type != providers.MsgTypeCompressionStatus {
+			status = providers.Msg{Type: providers.MsgTypeCompressionStatus, Value: compressionFinishedMessage}
 		}
-		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: compressionInitializedMessage}
+		if strings.TrimSpace(status.Value) == "" {
+			status.Value = compressionFinishedMessage
+		}
+		out <- status
+		notifyCompressionStatusSent(provider, sessionID)
 		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: summary}
 		out <- providers.Msg{Type: providers.MsgTypeChatFinal, Value: summary}
 	}()
 	return out, true
+}
+
+func notifyCompressionStatusSent(provider providers.Provider, sessionID string) {
+	notifier, ok := provider.(compressionStatusSentNotifier)
+	if !ok {
+		return
+	}
+	notifier.NotifyCompressionStatusSent(sessionID)
 }
 
 func parseCompressCommand(prompt string) (int, bool, error) {

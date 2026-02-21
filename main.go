@@ -38,6 +38,7 @@ type Config struct {
 	Timeout                    time.Duration
 	FSRoot                     string
 	DBPath                     string
+	BypassCompressionBarrier   bool
 	Mode                       Mode
 	TelegramPollTimeoutSeconds int
 	TelegramAllowedUserIDs     []int64
@@ -168,6 +169,12 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 	if err != nil {
 		return nil, nil, fmt.Errorf("middleware init error: %w", err)
 	}
+	if !cfg.BypassCompressionBarrier {
+		provider, err = middleware.NewCompressionBarrier(provider)
+		if err != nil {
+			return nil, nil, fmt.Errorf("middleware init error: %w", err)
+		}
+	}
 	return provider, closeMiddleware, nil
 }
 
@@ -222,6 +229,7 @@ func loadConfig(defaultRoot string) (Config, error) {
 	timeout := flag.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flag.String("fs-root", defaultRoot, "filesystem root")
 	dbPath := flag.String("db-path", "", "sqlite db path for chat logging")
+	bypassCompressionBarrier := flag.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
 	tuiModeFlag := flag.String("tui", defaultTUIMode, "tui mode: simple, bubbletea, or telegram")
 	telegramPollTimeoutSeconds := flag.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
 	telegramAllowedUsersRaw := flag.String("telegram-allowed-users", defaultTelegramAllowedUsers, "comma-separated Telegram user IDs allowed in telegram mode")
@@ -244,6 +252,7 @@ func loadConfig(defaultRoot string) (Config, error) {
 		Timeout:                    *timeout,
 		FSRoot:                     strings.TrimSpace(*fsRoot),
 		DBPath:                     strings.TrimSpace(*dbPath),
+		BypassCompressionBarrier:   *bypassCompressionBarrier,
 		Mode:                       mode,
 		TelegramPollTimeoutSeconds: *telegramPollTimeoutSeconds,
 		TelegramAllowedUserIDs:     allowedUsers,
