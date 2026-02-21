@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/channels"
-	"github.com/fernandopn/benoit/internal/sessionrouter"
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 	"github.com/fernandopn/benoit/tools"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
@@ -200,14 +200,14 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 		return nil, nil, fmt.Errorf("persistence init error: %w", err)
 	}
 
-	routerCfg := sessionrouter.Config{
+	routerCfg := session.Config{
 		Model:                    cfg.Model,
 		OpenAIAPIKey:             cfg.Credentials.OpenAIAPIKey,
 		OpenAIProviderParams:     cfg.OpenAIProviderParams,
 		TraceProviderDBPath:      cfg.TraceProviderDBPath,
 		BypassCompressionBarrier: cfg.BypassCompressionBarrier,
 	}
-	router, closeFactory, err := sessionrouter.NewRouterProvider(ctx, routerCfg, toolSet, sessionStore)
+	router, closeFactory, err := session.NewRouterProvider(ctx, routerCfg, toolSet, sessionStore)
 	if err != nil {
 		if closeSessionStore != nil {
 			_ = closeSessionStore()
