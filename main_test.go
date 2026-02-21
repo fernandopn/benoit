@@ -221,79 +221,36 @@ func TestLoadTUIConfigSessionIDFlag(t *testing.T) {
 	}
 }
 
+func TestLoadTUIConfigFSRootFlag(t *testing.T) {
+	t.Run("not provided", func(t *testing.T) {
+		cfg, err := loadTUIConfig("/tmp/benoit", nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.FSRootProvided {
+			t.Fatal("expected FSRootProvided to be false")
+		}
+	})
+
+	t.Run("provided", func(t *testing.T) {
+		cfg, err := loadTUIConfig("/tmp/benoit", []string{"-fs-root", "/tmp/custom"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !cfg.FSRootProvided {
+			t.Fatal("expected FSRootProvided to be true")
+		}
+		if cfg.FSRoot != "/tmp/custom" {
+			t.Fatalf("unexpected fs root: %q", cfg.FSRoot)
+		}
+	})
+}
+
 func TestSelectedTools(t *testing.T) {
 	const fsRoot = "/tmp/benoit-tools"
 
-	t.Run("without maton", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file"}
-		if len(names) != len(expected) {
-			t.Fatalf("unexpected tool count: %v", names)
-		}
-		for i, want := range expected {
-			if names[i] != want {
-				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
-			}
-		}
-	})
-
-	t.Run("with maton", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, Credentials: CredentialConfig{MatonAPIKey: "test-key"}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file", "maton_gcalendar", "maton_gmail"}
-		if len(names) != len(expected) {
-			t.Fatalf("unexpected tool count: %v", names)
-		}
-		for i, want := range expected {
-			if names[i] != want {
-				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
-			}
-		}
-	})
-
-	t.Run("with telegram", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file", "send_channel_message"}
-		if len(names) != len(expected) {
-			t.Fatalf("unexpected tool count: %v", names)
-		}
-		for i, want := range expected {
-			if names[i] != want {
-				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
-			}
-		}
-	})
-
-	t.Run("with telegram and maton", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, Credentials: CredentialConfig{TelegramBotToken: "telegram-key", MatonAPIKey: "test-key"}})
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file", "send_channel_message", "maton_gcalendar", "maton_gmail"}
-		if len(names) != len(expected) {
-			t.Fatalf("unexpected tool count: %v", names)
-		}
-		for i, want := range expected {
-			if names[i] != want {
-				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
-			}
-		}
-	})
-
-	t.Run("telegram disabled on channel_listener", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandChannelListener, FSRoot: fsRoot, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+	t.Run("without fs root", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -309,8 +266,93 @@ func TestSelectedTools(t *testing.T) {
 		}
 	})
 
-	t.Run("tui requires fs root for file tools", func(t *testing.T) {
-		_, err := selectedTools(Config{Command: CommandTUI, FSRoot: "  "})
+	t.Run("with fs root", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with maton", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true, Credentials: CredentialConfig{MatonAPIKey: "test-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory", "maton_gcalendar", "maton_gmail"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with telegram", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory", "send_channel_message"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with telegram and maton", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true, Credentials: CredentialConfig{TelegramBotToken: "telegram-key", MatonAPIKey: "test-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "get_current_directory", "send_channel_message", "maton_gcalendar", "maton_gmail"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("telegram disabled on channel_listener", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandChannelListener, FSRoot: fsRoot, FSRootProvided: true, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("tui requires fs root when flag is provided", func(t *testing.T) {
+		_, err := selectedTools(Config{Command: CommandTUI, FSRootProvided: true, FSRoot: "  "})
 		if err == nil {
 			t.Fatal("expected fs root validation error")
 		}
@@ -341,6 +383,19 @@ func TestValidateConfigSessionID(t *testing.T) {
 			t.Fatal("expected validation error")
 		}
 		if !strings.Contains(err.Error(), "-session-id") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid fs root when provided", func(t *testing.T) {
+		cfg.SessionID = "session-1"
+		cfg.FSRootProvided = true
+		cfg.FSRoot = "  "
+		err := validateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), "-fs-root") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

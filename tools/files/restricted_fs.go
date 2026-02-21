@@ -59,6 +59,22 @@ func (r restrictedFS) ReadFile(name string) ([]byte, error) {
 	return r.base.ReadFile(path)
 }
 
+func (r restrictedFS) WriteFile(name string, data []byte) error {
+	path, err := r.resolve(name)
+	if err != nil {
+		return err
+	}
+	return r.base.WriteFile(path, data)
+}
+
+func (r restrictedFS) RemoveFile(name string) error {
+	path, err := r.resolve(name)
+	if err != nil {
+		return err
+	}
+	return r.base.RemoveFile(path)
+}
+
 func (r restrictedFS) Getwd() (string, error) {
 	if r.root == "" {
 		return r.base.Getwd()

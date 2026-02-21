@@ -2,12 +2,18 @@ package files
 
 import (
 	"context"
+	"fmt"
+	"sort"
+	"strings"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
 )
 
-// ReadFileTool reads a file's contents.
+const defaultReadLimit = 2000
+const maxReadLineLength = 2000
+
+// ReadFileTool reads file or directory content.
 type ReadFileTool struct {
 	fs FileSystem
 }
@@ -21,26 +27,34 @@ func NewReadFileToolWithFS(fs FileSystem) *ReadFileTool {
 }
 
 func (r *ReadFileTool) Name() string {
-	return "read_file"
+	return "read"
 }
 
 func (r *ReadFileTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        r.Name(),
-			Description: openai.String("Read a file and return its contents as text."),
+			Description: openai.String("Read a file or directory from the local filesystem. Returns numbered lines for files and plain entries for directories."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					pathArgName: map[string]any{
+					filePathArgName: map[string]any{
 						"type":        "string",
-						"description": "File path to read",
+						"description": "Absolute file or directory path",
+					},
+					offsetArgName: map[string]any{
+						"type":        "integer",
+						"description": "1-based starting line for file reads",
+					},
+					limitArgName: map[string]any{
+						"type":        "integer",
+						"description": "Maximum number of lines to return (default 2000)",
 					},
 				},
-				"required":             []string{pathArgName},
+				"required":             []string{filePathArgName},
 				"additionalProperties": false,
 			},
-			Strict: openai.Bool(true),
+			Strict: openai.Bool(false),
 		},
 	}
 }
@@ -51,15 +65,56 @@ func (r *ReadFileTool) Call(ctx context.Context, args map[string]any) (string, e
 		return toolError(err), nil
 	}
 
-	path, err := requiredPathArg(args)
+	path, err := requiredFilePathArg(args)
 	if err != nil {
 		return toolError(err), nil
+	}
+	offset, err := optionalPositiveIntArg(args, offsetArgName, 1)
+	if err != nil {
+		return toolError(err), nil
+	}
+	limit, err := optionalPositiveIntArg(args, limitArgName, defaultReadLimit)
+	if err != nil {
+		return toolError(err), nil
+	}
+
+	if entries, dirErr := r.fs.ReadDir(path); dirErr == nil {
+		names := make([]string, 0, len(entries))
+		for _, entry := range entries {
+			name := entry.Name()
+			if entry.IsDir() {
+				name += "/"
+			}
+			names = append(names, name)
+		}
+		sort.Strings(names)
+		return strings.Join(names, "\n"), nil
 	}
 
 	data, err := r.fs.ReadFile(path)
 	if err != nil {
 		return toolError(err), nil
 	}
+	return formatReadContent(string(data), offset, limit), nil
+}
 
-	return string(data), nil
+func formatReadContent(content string, offset int, limit int) string {
+	lines := strings.Split(content, "\n")
+	if offset > len(lines) {
+		return ""
+	}
+	start := offset - 1
+	end := start + limit
+	if end > len(lines) {
+		end = len(lines)
+	}
+	formatted := make([]string, 0, end-start)
+	for i := start; i < end; i++ {
+		line := lines[i]
+		if len(line) > maxReadLineLength {
+			line = line[:maxReadLineLength]
+		}
+		formatted = append(formatted, fmt.Sprintf("%d: %s", i+1, line))
+	}
+	return strings.Join(formatted, "\n")
 }

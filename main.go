@@ -57,6 +57,7 @@ type Config struct {
 	Model                      string
 	Timeout                    time.Duration
 	FSRoot                     string
+	FSRootProvided             bool
 	DBPath                     string
 	BypassCompressionBarrier   bool
 	TelegramPollTimeoutSeconds int
@@ -157,6 +158,9 @@ func validateConfig(cfg Config) error {
 	case CommandTUI:
 		if err := validateProviderCommandConfig(cfg); err != nil {
 			return err
+		}
+		if cfg.FSRootProvided && strings.TrimSpace(cfg.FSRoot) == "" {
+			return fmt.Errorf("flag error: -fs-root cannot be empty")
 		}
 		if cfg.Render != RenderSimple && cfg.Render != RenderBubbleTea {
 			return fmt.Errorf("flag error: invalid render mode %q", cfg.Render)
@@ -383,7 +387,7 @@ func selectedTools(cfg Config) ([]tools.Tool, error) {
 }
 
 func configuredFileTools(cfg Config) ([]tools.Tool, error) {
-	if cfg.Command != CommandTUI {
+	if cfg.Command != CommandTUI || !cfg.FSRootProvided {
 		return nil, nil
 	}
 	return filetools.NewToolSet(cfg.FSRoot)
@@ -465,6 +469,16 @@ func parseFlagSet(flagSet *flag.FlagSet, args []string) error {
 	return nil
 }
 
+func flagIsSet(flagSet *flag.FlagSet, name string) bool {
+	set := false
+	flagSet.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			set = true
+		}
+	})
+	return set
+}
+
 func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 	flagSet := flag.NewFlagSet(string(CommandTUI), flag.ContinueOnError)
 	shared := bindProviderFlags(flagSet, defaultRoot)
@@ -473,6 +487,7 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
 	}
+	fsRootProvided := flagIsSet(flagSet, "fs-root")
 	renderMode, err := parseRenderMode(*renderRaw)
 	if err != nil {
 		return Config{}, fmt.Errorf("flag error: %w", err)
@@ -484,6 +499,7 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 		Model:                    strings.TrimSpace(*shared.model),
 		Timeout:                  *shared.timeout,
 		FSRoot:                   strings.TrimSpace(*shared.storage.fsRoot),
+		FSRootProvided:           fsRootProvided,
 		DBPath:                   strings.TrimSpace(*shared.storage.dbPath),
 		BypassCompressionBarrier: *shared.bypassCompressionBarrier,
 	}, nil
@@ -498,6 +514,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
 	}
+	fsRootProvided := flagIsSet(flagSet, "fs-root")
 	channel, err := parseChannelMode(*channelRaw)
 	if err != nil {
 		return Config{}, fmt.Errorf("flag error: %w", err)
@@ -516,6 +533,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 		Model:                      strings.TrimSpace(*shared.model),
 		Timeout:                    *shared.timeout,
 		FSRoot:                     strings.TrimSpace(*shared.storage.fsRoot),
+		FSRootProvided:             fsRootProvided,
 		DBPath:                     strings.TrimSpace(*shared.storage.dbPath),
 		BypassCompressionBarrier:   *shared.bypassCompressionBarrier,
 		TelegramPollTimeoutSeconds: *telegramPollTimeoutSeconds,
@@ -529,10 +547,12 @@ func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
 	}
+	fsRootProvided := flagIsSet(flagSet, "fs-root")
 	return Config{
-		Command: CommandListSessions,
-		FSRoot:  strings.TrimSpace(*storage.fsRoot),
-		DBPath:  strings.TrimSpace(*storage.dbPath),
+		Command:        CommandListSessions,
+		FSRoot:         strings.TrimSpace(*storage.fsRoot),
+		FSRootProvided: fsRootProvided,
+		DBPath:         strings.TrimSpace(*storage.dbPath),
 	}, nil
 }
 

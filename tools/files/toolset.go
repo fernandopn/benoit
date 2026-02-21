@@ -20,7 +20,10 @@ func NewToolSet(root string) ([]tools.Tool, error) {
 
 	return []tools.Tool{
 		NewListFilesToolWithFS(restrictedFS),
-		NewCurrentDirectoryToolWithFS(restrictedFS),
+		NewGrepToolWithFS(restrictedFS),
 		NewReadFileToolWithFS(restrictedFS),
+		NewWriteFileToolWithFS(restrictedFS),
+		NewPatchFileToolWithFS(restrictedFS),
+		NewCurrentDirectoryToolWithFS(restrictedFS),
 	}, nil
 }

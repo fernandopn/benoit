@@ -13,11 +13,11 @@ func TestNewToolSetIncludesExpectedTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(toolSet) != 3 {
+	if len(toolSet) != 6 {
 		t.Fatalf("unexpected tool count: %d", len(toolSet))
 	}
-	got := []string{toolSet[0].Name(), toolSet[1].Name(), toolSet[2].Name()}
-	want := []string{"list_files", "get_current_directory", "read_file"}
+	got := []string{toolSet[0].Name(), toolSet[1].Name(), toolSet[2].Name(), toolSet[3].Name(), toolSet[4].Name(), toolSet[5].Name()}
+	want := []string{"glob", "grep", "read", "write", "apply_patch", "get_current_directory"}
 	for i := range want {
 		if got[i] != want[i] {
 			t.Fatalf("tool order mismatch at %d: got %q want %q", i, got[i], want[i])

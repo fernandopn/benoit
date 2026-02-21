@@ -1,18 +1,21 @@
 package files
 
 import (
+	"errors"
 	"io/fs"
 	"os"
 	"time"
 )
 
 type fakeFS struct {
-	entries     map[string][]os.DirEntry
-	readDirErr  map[string]error
-	files       map[string][]byte
-	readFileErr map[string]error
-	cwd         string
-	cwdErr      error
+	entries       map[string][]os.DirEntry
+	readDirErr    map[string]error
+	files         map[string][]byte
+	readFileErr   map[string]error
+	writeFileErr  map[string]error
+	removeFileErr map[string]error
+	cwd           string
+	cwdErr        error
 }
 
 func (f fakeFS) ReadDir(name string) ([]os.DirEntry, error) {
@@ -22,7 +25,10 @@ func (f fakeFS) ReadDir(name string) ([]os.DirEntry, error) {
 	if entries, ok := f.entries[name]; ok {
 		return entries, nil
 	}
-	return []os.DirEntry{}, nil
+	if _, ok := f.files[name]; ok {
+		return nil, errors.New("not a directory")
+	}
+	return nil, errors.New("path not found")
 }
 
 func (f fakeFS) ReadFile(name string) ([]byte, error) {
@@ -32,7 +38,33 @@ func (f fakeFS) ReadFile(name string) ([]byte, error) {
 	if data, ok := f.files[name]; ok {
 		return data, nil
 	}
-	return []byte{}, nil
+	if _, ok := f.entries[name]; ok {
+		return nil, errors.New("is a directory")
+	}
+	return nil, errors.New("path not found")
+}
+
+func (f fakeFS) WriteFile(name string, data []byte) error {
+	if err, ok := f.writeFileErr[name]; ok {
+		return err
+	}
+	if f.files == nil {
+		return nil
+	}
+	cloned := make([]byte, len(data))
+	copy(cloned, data)
+	f.files[name] = cloned
+	return nil
+}
+
+func (f fakeFS) RemoveFile(name string) error {
+	if err, ok := f.removeFileErr[name]; ok {
+		return err
+	}
+	if f.files != nil {
+		delete(f.files, name)
+	}
+	return nil
 }
 
 func (f fakeFS) Getwd() (string, error) {

@@ -9,7 +9,7 @@ import (
 
 func TestApplyStreamMessagesMergesToolResultIntoCallBlock(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "list_files", "call_id": "call-1"}
+	meta := map[string]string{"tool": "glob", "call_id": "call-1"}
 
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolCall,
@@ -50,7 +50,7 @@ func TestApplyStreamMessagesMergesToolResultIntoCallBlock(t *testing.T) {
 
 func TestApplyStreamMessagesMarksPendingToolError(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "list_files", "call_id": "call-err"}
+	meta := map[string]string{"tool": "glob", "call_id": "call-err"}
 
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolCall,
