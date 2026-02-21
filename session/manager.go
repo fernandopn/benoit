@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -17,7 +18,7 @@ type Config struct {
 	Model                    string
 	OpenAIAPIKey             string
 	OpenAIProviderParams     providers.OpenAIProviderParams
-	TraceProviderDBPath      string
+	DB                       *sql.DB
 	BypassCompressionBarrier bool
 }
 
@@ -116,7 +117,7 @@ func (f *providerFactory) createProvider(sessionID string) (providers.Provider, 
 	var provider providers.Provider = openAIProvider
 	provider = middleware.NewSessionStoreMiddleware(provider, f.sessionStore, f.provider, sessionID)
 
-	provider, closeTrace, err := middleware.ConfigurePersistTrace(f.ctx, provider, f.provider, sessionID, strings.TrimSpace(f.cfg.TraceProviderDBPath))
+	provider, closeTrace, err := middleware.ConfigurePersistTraceWithDB(f.ctx, provider, f.provider, sessionID, f.cfg.DB)
 	if err != nil {
 		return nil, nil, err
 	}

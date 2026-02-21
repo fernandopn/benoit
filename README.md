@@ -27,10 +27,8 @@ official Go SDK.
 - `-fs-root`
   - filesystem root passed to filesystem-backed tools
   - default: current working directory
-- `-trace_provider_db`
-  - enable sqlite trace logging of provider stream messages
-- `-session-db-path`
-  - enable sqlite persistence of per-session provider state
+- `-db-path`
+  - sqlite path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
@@ -38,7 +36,7 @@ official Go SDK.
 - `--render`
   - interface mode (`simple` or `bubbletea`)
   - default: `simple`
-- `--session_id`
+- `--session-id`
   - resume an existing session ID
 
 ### `channel_listener`
@@ -52,10 +50,8 @@ official Go SDK.
 - `-fs-root`
   - filesystem root passed to filesystem-backed tools
   - default: current working directory
-- `-trace_provider_db`
-  - enable sqlite trace logging of provider stream messages
-- `-session-db-path`
-  - enable sqlite persistence of per-session provider state
+- `-db-path`
+  - sqlite path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
@@ -69,8 +65,8 @@ official Go SDK.
 
 ### `list_sessions`
 
-- `-session-db-path`
-  - sqlite path used by session persistence
+- `-db-path`
+  - sqlite path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-fs-root`
   - filesystem root passed to filesystem-backed tools

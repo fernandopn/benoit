@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -56,8 +57,7 @@ type Config struct {
 	Model                      string
 	Timeout                    time.Duration
 	FSRoot                     string
-	TraceProviderDBPath        string
-	SessionDBPath              string
+	DBPath                     string
 	BypassCompressionBarrier   bool
 	TelegramPollTimeoutSeconds int
 	TelegramAllowedUserIDs     []int64
@@ -70,7 +70,7 @@ const (
 	openAIReasoningSummary            = shared.ReasoningSummaryDetailed
 	defaultRenderMode                 = string(RenderSimple)
 	defaultChannelMode                = string(ChannelTelegram)
-	defaultSessionDBPath              = "db.sqlite"
+	defaultDBPath                     = "db.sqlite"
 	defaultTelegramPollTimeoutSeconds = 30
 	defaultTelegramAllowedUsers       = "8230557735"
 
@@ -180,8 +180,8 @@ func validateConfig(cfg Config) error {
 		}
 		return nil
 	case CommandListSessions:
-		if strings.TrimSpace(cfg.SessionDBPath) == "" {
-			return fmt.Errorf("flag error: -session-db-path is required for list_sessions")
+		if strings.TrimSpace(cfg.DBPath) == "" {
+			return fmt.Errorf("flag error: -db-path is required for list_sessions")
 		}
 		return nil
 	default:
@@ -195,16 +195,21 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 		return nil, nil, fmt.Errorf("tool config error: %w", err)
 	}
 
-	sessionStore, closeSessionStore, err := persistence.ConfigureSQLiteSessionStore(ctx, strings.TrimSpace(cfg.SessionDBPath))
+	sessionStore, closeSessionStore, err := persistence.ConfigureSQLiteSessionStore(ctx, strings.TrimSpace(cfg.DBPath))
 	if err != nil {
 		return nil, nil, fmt.Errorf("persistence init error: %w", err)
+	}
+
+	var sharedDB *sql.DB
+	if sqliteStore, ok := sessionStore.(*persistence.SQLiteSessionStore); ok {
+		sharedDB = sqliteStore.DB()
 	}
 
 	routerCfg := session.Config{
 		Model:                    cfg.Model,
 		OpenAIAPIKey:             cfg.Credentials.OpenAIAPIKey,
 		OpenAIProviderParams:     cfg.OpenAIProviderParams,
-		TraceProviderDBPath:      cfg.TraceProviderDBPath,
+		DB:                       sharedDB,
 		BypassCompressionBarrier: cfg.BypassCompressionBarrier,
 	}
 	router, closeFactory, err := session.NewRouterProvider(ctx, routerCfg, toolSet, sessionStore)
@@ -246,7 +251,7 @@ func runCommand(ctx context.Context, cfg Config, provider providers.Provider) er
 }
 
 func runListSessions(ctx context.Context, cfg Config) error {
-	store, closeStore, err := persistence.ConfigureSQLiteSessionStore(ctx, strings.TrimSpace(cfg.SessionDBPath))
+	store, closeStore, err := persistence.ConfigureSQLiteSessionStore(ctx, strings.TrimSpace(cfg.DBPath))
 	if err != nil {
 		return fmt.Errorf("persistence init error: %w", err)
 	}
@@ -367,11 +372,10 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 	model := flagSet.String("model", "gpt-5.2", "model name")
 	timeout := flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	traceProviderDBPath := flagSet.String("trace_provider_db", "", "sqlite db path for provider trace logging")
-	sessionDBPath := flagSet.String("session-db-path", defaultSessionDBPath, "sqlite db path for persisted provider sessions")
+	dbPath := flagSet.String("db-path", defaultDBPath, "sqlite db path for trace and session persistence")
 	bypassCompressionBarrier := flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
 	renderRaw := flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
-	sessionID := flagSet.String("session_id", "", "resume an existing session ID")
+	sessionID := flagSet.String("session-id", "", "resume an existing session ID")
 	if err := flagSet.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -389,8 +393,7 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 		Model:                    strings.TrimSpace(*model),
 		Timeout:                  *timeout,
 		FSRoot:                   strings.TrimSpace(*fsRoot),
-		TraceProviderDBPath:      strings.TrimSpace(*traceProviderDBPath),
-		SessionDBPath:            strings.TrimSpace(*sessionDBPath),
+		DBPath:                   strings.TrimSpace(*dbPath),
 		BypassCompressionBarrier: *bypassCompressionBarrier,
 	}, nil
 }
@@ -401,8 +404,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	model := flagSet.String("model", "gpt-5.2", "model name")
 	timeout := flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	traceProviderDBPath := flagSet.String("trace_provider_db", "", "sqlite db path for provider trace logging")
-	sessionDBPath := flagSet.String("session-db-path", defaultSessionDBPath, "sqlite db path for persisted provider sessions")
+	dbPath := flagSet.String("db-path", defaultDBPath, "sqlite db path for trace and session persistence")
 	bypassCompressionBarrier := flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
 	telegramPollTimeoutSeconds := flagSet.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
 	telegramAllowedUsersRaw := flagSet.String("telegram-allowed-users", defaultTelegramAllowedUsers, "comma-separated Telegram user IDs allowed in telegram mode")
@@ -430,8 +432,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 		Model:                      strings.TrimSpace(*model),
 		Timeout:                    *timeout,
 		FSRoot:                     strings.TrimSpace(*fsRoot),
-		TraceProviderDBPath:        strings.TrimSpace(*traceProviderDBPath),
-		SessionDBPath:              strings.TrimSpace(*sessionDBPath),
+		DBPath:                     strings.TrimSpace(*dbPath),
 		BypassCompressionBarrier:   *bypassCompressionBarrier,
 		TelegramPollTimeoutSeconds: *telegramPollTimeoutSeconds,
 		TelegramAllowedUserIDs:     allowedUsers,
@@ -441,7 +442,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 	flagSet := flag.NewFlagSet(string(CommandListSessions), flag.ContinueOnError)
 	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	sessionDBPath := flagSet.String("session-db-path", defaultSessionDBPath, "sqlite db path for persisted provider sessions")
+	dbPath := flagSet.String("db-path", defaultDBPath, "sqlite db path for trace and session persistence")
 	if err := flagSet.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -449,9 +450,9 @@ func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 		return Config{}, fmt.Errorf("flag error: unexpected positional arguments: %s", strings.Join(flagSet.Args(), " "))
 	}
 	return Config{
-		Command:       CommandListSessions,
-		FSRoot:        strings.TrimSpace(*fsRoot),
-		SessionDBPath: strings.TrimSpace(*sessionDBPath),
+		Command: CommandListSessions,
+		FSRoot:  strings.TrimSpace(*fsRoot),
+		DBPath:  strings.TrimSpace(*dbPath),
 	}, nil
 }
 

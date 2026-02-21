@@ -164,7 +164,7 @@ func TestParseTelegramAllowedUsers(t *testing.T) {
 	})
 }
 
-func TestLoadConfigDefaultsSessionDBPath(t *testing.T) {
+func TestLoadConfigDefaultsDBPath(t *testing.T) {
 	const root = "/tmp/benoit"
 
 	t.Run("tui", func(t *testing.T) {
@@ -172,8 +172,8 @@ func TestLoadConfigDefaultsSessionDBPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.SessionDBPath != defaultSessionDBPath {
-			t.Fatalf("unexpected default session db path: %q", cfg.SessionDBPath)
+		if cfg.DBPath != defaultDBPath {
+			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
 	})
 
@@ -182,8 +182,8 @@ func TestLoadConfigDefaultsSessionDBPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.SessionDBPath != defaultSessionDBPath {
-			t.Fatalf("unexpected default session db path: %q", cfg.SessionDBPath)
+		if cfg.DBPath != defaultDBPath {
+			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
 	})
 
@@ -192,10 +192,20 @@ func TestLoadConfigDefaultsSessionDBPath(t *testing.T) {
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
-		if cfg.SessionDBPath != defaultSessionDBPath {
-			t.Fatalf("unexpected default session db path: %q", cfg.SessionDBPath)
+		if cfg.DBPath != defaultDBPath {
+			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
 	})
+}
+
+func TestLoadTUIConfigSessionIDFlag(t *testing.T) {
+	cfg, err := loadTUIConfig("/tmp/benoit", []string{"-session-id", "session-123"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SessionID != "session-123" {
+		t.Fatalf("unexpected session id: %q", cfg.SessionID)
+	}
 }
 
 func TestSelectedTools(t *testing.T) {

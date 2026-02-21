@@ -9,7 +9,6 @@ import (
 
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
-	_ "modernc.org/sqlite"
 )
 
 const persistTraceSchema = `
@@ -30,6 +29,7 @@ type PersistTrace struct {
 	providerType providers.ProviderType
 	sessionID    string
 	db           *sql.DB
+	ownsDB       bool
 }
 
 func ConfigurePersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, dbPath string) (providers.Provider, func() error, error) {
@@ -45,6 +45,19 @@ func ConfigurePersistTrace(ctx context.Context, provider providers.Provider, pro
 	return traceProvider, traceProvider.Close, nil
 }
 
+func ConfigurePersistTraceWithDB(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *sql.DB) (providers.Provider, func() error, error) {
+	if db == nil {
+		return provider, nil, nil
+	}
+
+	traceProvider, err := NewPersistTraceWithDB(ctx, provider, providerType, sessionID, db)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	return traceProvider, traceProvider.Close, nil
+}
+
 func NewPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, dbPath string) (*PersistTrace, error) {
 	if provider == nil {
 		return nil, errors.New("provider is required")
@@ -52,14 +65,37 @@ func NewPersistTrace(ctx context.Context, provider providers.Provider, providerT
 	if dbPath == "" {
 		return nil, errors.New("db path is required")
 	}
-	db, err := sql.Open("sqlite", dbPath)
+	db, err := persistence.OpenSQLiteDB(ctx, dbPath)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := db.ExecContext(ctx, persistTraceSchema); err != nil {
+	trace, err := newPersistTrace(ctx, provider, providerType, sessionID, db)
+	if err != nil {
 		if closeErr := db.Close(); closeErr != nil {
 			return nil, closeErr
 		}
+		return nil, err
+	}
+	trace.ownsDB = true
+	return trace, nil
+}
+
+func NewPersistTraceWithDB(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *sql.DB) (*PersistTrace, error) {
+	if provider == nil {
+		return nil, errors.New("provider is required")
+	}
+	if db == nil {
+		return nil, errors.New("db is required")
+	}
+	trace, err := newPersistTrace(ctx, provider, providerType, sessionID, db)
+	if err != nil {
+		return nil, err
+	}
+	return trace, nil
+}
+
+func newPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *sql.DB) (*PersistTrace, error) {
+	if _, err := db.ExecContext(ctx, persistTraceSchema); err != nil {
 		return nil, err
 	}
 	return &PersistTrace{
@@ -113,7 +149,7 @@ func (s *PersistTrace) Name() string {
 }
 
 func (s *PersistTrace) Close() error {
-	if s.db == nil {
+	if s.db == nil || !s.ownsDB {
 		return nil
 	}
 	return s.db.Close()

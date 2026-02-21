@@ -184,3 +184,51 @@ func TestConfigurePersistTrace(t *testing.T) {
 		}
 	})
 }
+
+func TestConfigurePersistTraceWithDB(t *testing.T) {
+	t.Run("nil db disables middleware", func(t *testing.T) {
+		base := &persistTraceStubProvider{}
+		configured, closeFn, err := ConfigurePersistTraceWithDB(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", nil)
+		if err != nil {
+			t.Fatalf("expected no error, got %v", err)
+		}
+		if configured != base {
+			t.Fatalf("expected original provider to be returned, got %#v", configured)
+		}
+		if closeFn != nil {
+			t.Fatal("expected nil close function")
+		}
+	})
+
+	t.Run("shared db stays open after middleware close", func(t *testing.T) {
+		base := &persistTraceStubProvider{messages: []providers.Msg{{Type: providers.MsgTypeChatFinal, Value: "ok"}}}
+		db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "shared.sqlite"))
+		if err != nil {
+			t.Fatalf("open shared db: %v", err)
+		}
+		defer db.Close()
+
+		configured, closeFn, err := ConfigurePersistTraceWithDB(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", db)
+		if err != nil {
+			t.Fatalf("configure with db: %v", err)
+		}
+		if configured == base {
+			t.Fatal("expected middleware wrapper, got base provider")
+		}
+		if closeFn == nil {
+			t.Fatal("expected close function")
+		}
+
+		out := configured.Chat(context.Background(), "hi")
+		for range out {
+		}
+
+		if err := closeFn(); err != nil {
+			t.Fatalf("close middleware: %v", err)
+		}
+
+		if _, err := db.Exec("SELECT 1"); err != nil {
+			t.Fatalf("expected shared db to stay open, got %v", err)
+		}
+	})
+}

@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/providers"
-	_ "modernc.org/sqlite"
 )
 
 const sqliteSessionStoreSchema = `
@@ -24,6 +23,13 @@ CREATE INDEX IF NOT EXISTS idx_session_state_updated_at ON session_state(updated
 
 type SQLiteSessionStore struct {
 	db *sql.DB
+}
+
+func (s *SQLiteSessionStore) DB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	return s.db
 }
 
 func ConfigureSQLiteSessionStore(ctx context.Context, dbPath string) (SessionStore, func() error, error) {
@@ -42,7 +48,7 @@ func NewSQLiteSessionStore(ctx context.Context, dbPath string) (*SQLiteSessionSt
 	if strings.TrimSpace(dbPath) == "" {
 		return nil, errors.New("db path is required")
 	}
-	db, err := sql.Open("sqlite", strings.TrimSpace(dbPath))
+	db, err := OpenSQLiteDB(ctx, strings.TrimSpace(dbPath))
 	if err != nil {
 		return nil, err
 	}
