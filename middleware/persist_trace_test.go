@@ -2,11 +2,11 @@ package middleware
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"testing"
 
+	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
 )
 
@@ -42,6 +42,14 @@ func (s *persistTraceStubProvider) Name() string {
 
 func TestPersistTracePersistsMessages(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "chat.db")
+	db, closeDB, err := persistence.ConfigureDB(context.Background(), dbPath)
+	if err != nil {
+		t.Fatalf("configure db: %v", err)
+	}
+	if closeDB != nil {
+		defer closeDB()
+	}
+
 	provider := &persistTraceStubProvider{messages: []providers.Msg{
 		{Type: providers.MsgTypeChatDelta, Value: "hel"},
 		{Type: providers.MsgTypeChatDelta, Value: "lo"},
@@ -50,7 +58,7 @@ func TestPersistTracePersistsMessages(t *testing.T) {
 		{Type: providers.MsgTypeReasoningSummaryFinal, Value: "thinking"},
 		{Type: providers.MsgTypeToolResult, Value: "ok"},
 	}}
-	trace, err := NewPersistTrace(context.Background(), provider, providers.ProviderTypeOpenAI, "session-77", dbPath)
+	trace, err := NewPersistTrace(context.Background(), provider, providers.ProviderTypeOpenAI, "session-77", db)
 	if err != nil {
 		t.Fatalf("new persist trace: %v", err)
 	}
@@ -60,35 +68,9 @@ func TestPersistTracePersistsMessages(t *testing.T) {
 	for range out {
 	}
 
-	db, err := sql.Open("sqlite", dbPath)
-	if err != nil {
-		t.Fatalf("open sqlite for assertion: %v", err)
-	}
-	defer db.Close()
-
-	rows, err := db.Query(`SELECT provider, session_id, msg_type, value FROM messages ORDER BY id`)
-	if err != nil {
+	got := make([]persistence.TraceMessageModel, 0)
+	if err := db.NewSelect().Model(&got).Order("id ASC").Scan(context.Background()); err != nil {
 		t.Fatalf("query rows: %v", err)
-	}
-	defer rows.Close()
-
-	type row struct {
-		provider  int
-		sessionID string
-		msgType   string
-		value     string
-	}
-
-	got := []row{}
-	for rows.Next() {
-		var r row
-		if err := rows.Scan(&r.provider, &r.sessionID, &r.msgType, &r.value); err != nil {
-			t.Fatalf("scan row: %v", err)
-		}
-		got = append(got, r)
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("rows err: %v", err)
 	}
 
 	if len(got) != 7 {
@@ -96,28 +78,31 @@ func TestPersistTracePersistsMessages(t *testing.T) {
 	}
 
 	for i := range got {
-		if got[i].provider != int(providers.ProviderTypeOpenAI) {
-			t.Fatalf("unexpected provider at row %d: %d", i, got[i].provider)
+		if got[i].Provider != int(providers.ProviderTypeOpenAI) {
+			t.Fatalf("unexpected provider at row %d: %d", i, got[i].Provider)
 		}
-		if got[i].sessionID != "session-77" {
-			t.Fatalf("unexpected session at row %d: %q", i, got[i].sessionID)
+		if got[i].SessionID != "session-77" {
+			t.Fatalf("unexpected session at row %d: %q", i, got[i].SessionID)
 		}
 	}
 
-	if got[0].msgType != "input" || got[0].value != "hi" {
+	if got[0].MsgType != "input" || got[0].Value != "hi" {
 		t.Fatalf("unexpected first row: %#v", got[0])
 	}
-	if got[6].msgType != "tool_result" || got[6].value != "ok" {
+	if got[6].MsgType != "tool_result" || got[6].Value != "ok" {
 		t.Fatalf("unexpected final row: %#v", got[6])
 	}
 }
 
 func TestPersistTracePropagatesStorageErrors(t *testing.T) {
-	db, err := sql.Open("sqlite", ":memory:")
+	db, closeDB, err := persistence.ConfigureDB(context.Background(), filepath.Join(t.TempDir(), "closed.db"))
 	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatalf("configure db: %v", err)
 	}
-	if err := db.Close(); err != nil {
+	if closeDB == nil {
+		t.Fatal("expected close function")
+	}
+	if err := closeDB(); err != nil {
 		t.Fatalf("close db: %v", err)
 	}
 
@@ -133,7 +118,7 @@ func TestPersistTracePropagatesStorageErrors(t *testing.T) {
 	for msg := range out {
 		if msg.Type == providers.MsgTypeError {
 			seenError = true
-			if msg.Metadata["component"] != "sqlite" {
+			if msg.Metadata["component"] != "persistence" {
 				t.Fatalf("unexpected metadata: %#v", msg.Metadata)
 			}
 		}
@@ -144,9 +129,9 @@ func TestPersistTracePropagatesStorageErrors(t *testing.T) {
 }
 
 func TestConfigurePersistTrace(t *testing.T) {
-	t.Run("no path disables middleware", func(t *testing.T) {
+	t.Run("nil db disables middleware", func(t *testing.T) {
 		base := &persistTraceStubProvider{}
-		configured, closeFn, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", "   ")
+		configured, closeFn, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", nil)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -158,18 +143,16 @@ func TestConfigurePersistTrace(t *testing.T) {
 		}
 	})
 
-	t.Run("invalid path returns error", func(t *testing.T) {
+	t.Run("shared db wraps provider", func(t *testing.T) {
 		base := &persistTraceStubProvider{}
-		_, _, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", "/tmp/\x00bad")
-		if err == nil {
-			t.Fatal("expected db path error")
+		db, closeDB, err := persistence.ConfigureDB(context.Background(), filepath.Join(t.TempDir(), "chat.db"))
+		if err != nil {
+			t.Fatalf("configure db: %v", err)
 		}
-	})
-
-	t.Run("valid path wraps provider", func(t *testing.T) {
-		base := &persistTraceStubProvider{}
-		dbPath := filepath.Join(t.TempDir(), "chat.sqlite")
-		configured, closeFn, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", dbPath)
+		if closeDB != nil {
+			defer closeDB()
+		}
+		configured, closeFn, err := ConfigurePersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", db)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -181,54 +164,6 @@ func TestConfigurePersistTrace(t *testing.T) {
 		}
 		if err := closeFn(); err != nil {
 			t.Fatalf("close middleware error: %v", err)
-		}
-	})
-}
-
-func TestConfigurePersistTraceWithDB(t *testing.T) {
-	t.Run("nil db disables middleware", func(t *testing.T) {
-		base := &persistTraceStubProvider{}
-		configured, closeFn, err := ConfigurePersistTraceWithDB(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", nil)
-		if err != nil {
-			t.Fatalf("expected no error, got %v", err)
-		}
-		if configured != base {
-			t.Fatalf("expected original provider to be returned, got %#v", configured)
-		}
-		if closeFn != nil {
-			t.Fatal("expected nil close function")
-		}
-	})
-
-	t.Run("shared db stays open after middleware close", func(t *testing.T) {
-		base := &persistTraceStubProvider{messages: []providers.Msg{{Type: providers.MsgTypeChatFinal, Value: "ok"}}}
-		db, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "shared.sqlite"))
-		if err != nil {
-			t.Fatalf("open shared db: %v", err)
-		}
-		defer db.Close()
-
-		configured, closeFn, err := ConfigurePersistTraceWithDB(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", db)
-		if err != nil {
-			t.Fatalf("configure with db: %v", err)
-		}
-		if configured == base {
-			t.Fatal("expected middleware wrapper, got base provider")
-		}
-		if closeFn == nil {
-			t.Fatal("expected close function")
-		}
-
-		out := configured.Chat(context.Background(), "hi")
-		for range out {
-		}
-
-		if err := closeFn(); err != nil {
-			t.Fatalf("close middleware: %v", err)
-		}
-
-		if _, err := db.Exec("SELECT 1"); err != nil {
-			t.Fatalf("expected shared db to stay open, got %v", err)
 		}
 	})
 }

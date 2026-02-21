@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"flag"
 	"fmt"
@@ -195,32 +194,34 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 		return nil, nil, fmt.Errorf("tool config error: %w", err)
 	}
 
-	sessionStore, closeSessionStore, err := persistence.ConfigureSQLiteSessionStore(ctx, strings.TrimSpace(cfg.DBPath))
+	db, closeDB, err := persistence.ConfigureDB(ctx, strings.TrimSpace(cfg.DBPath))
 	if err != nil {
 		return nil, nil, fmt.Errorf("persistence init error: %w", err)
 	}
-
-	var sharedDB *sql.DB
-	if sqliteStore, ok := sessionStore.(*persistence.SQLiteSessionStore); ok {
-		sharedDB = sqliteStore.DB()
+	sessionStore, err := persistence.NewSessionStore(ctx, db)
+	if err != nil {
+		if closeDB != nil {
+			_ = closeDB()
+		}
+		return nil, nil, fmt.Errorf("persistence init error: %w", err)
 	}
 
 	routerCfg := session.Config{
 		Model:                    cfg.Model,
 		OpenAIAPIKey:             cfg.Credentials.OpenAIAPIKey,
 		OpenAIProviderParams:     cfg.OpenAIProviderParams,
-		DB:                       sharedDB,
+		DB:                       db,
 		BypassCompressionBarrier: cfg.BypassCompressionBarrier,
 	}
 	router, closeFactory, err := session.NewRouterProvider(ctx, routerCfg, toolSet, sessionStore)
 	if err != nil {
-		if closeSessionStore != nil {
-			_ = closeSessionStore()
+		if closeDB != nil {
+			_ = closeDB()
 		}
 		return nil, nil, fmt.Errorf("provider init error: %w", err)
 	}
 
-	return router, combineCloseFuncs(closeFactory, closeSessionStore), nil
+	return router, combineCloseFuncs(closeFactory, closeDB), nil
 }
 
 func runCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
@@ -251,12 +252,17 @@ func runCommand(ctx context.Context, cfg Config, provider providers.Provider) er
 }
 
 func runListSessions(ctx context.Context, cfg Config) error {
-	store, closeStore, err := persistence.ConfigureSQLiteSessionStore(ctx, strings.TrimSpace(cfg.DBPath))
+	db, closeDB, err := persistence.ConfigureDB(ctx, strings.TrimSpace(cfg.DBPath))
 	if err != nil {
 		return fmt.Errorf("persistence init error: %w", err)
 	}
-	if closeStore != nil {
-		defer closeStore()
+	if closeDB != nil {
+		defer closeDB()
+	}
+
+	store, err := persistence.NewSessionStore(ctx, db)
+	if err != nil {
+		return fmt.Errorf("persistence init error: %w", err)
 	}
 	if store == nil {
 		fmt.Println("No sessions found.")
@@ -372,7 +378,7 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 	model := flagSet.String("model", "gpt-5.2", "model name")
 	timeout := flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	dbPath := flagSet.String("db-path", defaultDBPath, "sqlite db path for trace and session persistence")
+	dbPath := flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence")
 	bypassCompressionBarrier := flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
 	renderRaw := flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
 	sessionID := flagSet.String("session-id", "", "resume an existing session ID")
@@ -404,7 +410,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	model := flagSet.String("model", "gpt-5.2", "model name")
 	timeout := flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)")
 	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	dbPath := flagSet.String("db-path", defaultDBPath, "sqlite db path for trace and session persistence")
+	dbPath := flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence")
 	bypassCompressionBarrier := flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware")
 	telegramPollTimeoutSeconds := flagSet.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
 	telegramAllowedUsersRaw := flagSet.String("telegram-allowed-users", defaultTelegramAllowedUsers, "comma-separated Telegram user IDs allowed in telegram mode")
@@ -442,7 +448,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 	flagSet := flag.NewFlagSet(string(CommandListSessions), flag.ContinueOnError)
 	fsRoot := flagSet.String("fs-root", defaultRoot, "filesystem root")
-	dbPath := flagSet.String("db-path", defaultDBPath, "sqlite db path for trace and session persistence")
+	dbPath := flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence")
 	if err := flagSet.Parse(args); err != nil {
 		return Config{}, err
 	}

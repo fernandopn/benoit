@@ -8,13 +8,20 @@ import (
 	"github.com/fernandopn/benoit/providers"
 )
 
-func TestSQLiteSessionStoreUpdateAndGet(t *testing.T) {
+func TestSessionStoreUpdateAndGet(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "session.db")
-	store, err := NewSQLiteSessionStore(context.Background(), dbPath)
+	db, closeDB, err := ConfigureDB(context.Background(), dbPath)
 	if err != nil {
-		t.Fatalf("new sqlite session store: %v", err)
+		t.Fatalf("configure db: %v", err)
 	}
-	defer store.Close()
+	if closeDB != nil {
+		defer closeDB()
+	}
+
+	store, err := NewSessionStore(context.Background(), db)
+	if err != nil {
+		t.Fatalf("new session store: %v", err)
+	}
 
 	remaining := int64(321)
 	if err := store.UpdateSession(context.Background(), SessionState{
@@ -41,13 +48,13 @@ func TestSQLiteSessionStoreUpdateAndGet(t *testing.T) {
 	}
 }
 
-func TestConfigureSQLiteSessionStore(t *testing.T) {
-	store, closeFn, err := ConfigureSQLiteSessionStore(context.Background(), "   ")
+func TestConfigureDB(t *testing.T) {
+	db, closeFn, err := ConfigureDB(context.Background(), "   ")
 	if err != nil {
 		t.Fatalf("expected no error, got %v", err)
 	}
-	if store != nil {
-		t.Fatalf("expected nil store, got %#v", store)
+	if db != nil {
+		t.Fatalf("expected nil db, got %#v", db)
 	}
 	if closeFn != nil {
 		t.Fatal("expected nil close function")

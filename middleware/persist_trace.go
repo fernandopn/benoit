@@ -2,55 +2,28 @@ package middleware
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
+	"github.com/uptrace/bun"
 )
-
-const persistTraceSchema = `
-CREATE TABLE IF NOT EXISTS messages (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	provider INTEGER NOT NULL,
-	session_id TEXT NOT NULL,
-	msg_type TEXT NOT NULL,
-	value TEXT NOT NULL,
-	metadata TEXT NOT NULL
-);
-CREATE INDEX IF NOT EXISTS idx_messages_provider_session_id ON messages(provider, session_id, id);`
-
-const persistTraceMsgTypeInput = "input"
 
 type PersistTrace struct {
 	provider     providers.Provider
 	providerType providers.ProviderType
 	sessionID    string
-	db           *sql.DB
-	ownsDB       bool
+	db           *bun.DB
 }
 
-func ConfigurePersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, dbPath string) (providers.Provider, func() error, error) {
-	if strings.TrimSpace(dbPath) == "" {
-		return provider, nil, nil
-	}
-
-	traceProvider, err := NewPersistTrace(ctx, provider, providerType, sessionID, strings.TrimSpace(dbPath))
-	if err != nil {
-		return nil, nil, err
-	}
-
-	return traceProvider, traceProvider.Close, nil
-}
-
-func ConfigurePersistTraceWithDB(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *sql.DB) (providers.Provider, func() error, error) {
+func ConfigurePersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (providers.Provider, func() error, error) {
 	if db == nil {
 		return provider, nil, nil
 	}
 
-	traceProvider, err := NewPersistTraceWithDB(ctx, provider, providerType, sessionID, db)
+	traceProvider, err := NewPersistTrace(ctx, provider, providerType, sessionID, db)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -58,29 +31,7 @@ func ConfigurePersistTraceWithDB(ctx context.Context, provider providers.Provide
 	return traceProvider, traceProvider.Close, nil
 }
 
-func NewPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, dbPath string) (*PersistTrace, error) {
-	if provider == nil {
-		return nil, errors.New("provider is required")
-	}
-	if dbPath == "" {
-		return nil, errors.New("db path is required")
-	}
-	db, err := persistence.OpenSQLiteDB(ctx, dbPath)
-	if err != nil {
-		return nil, err
-	}
-	trace, err := newPersistTrace(ctx, provider, providerType, sessionID, db)
-	if err != nil {
-		if closeErr := db.Close(); closeErr != nil {
-			return nil, closeErr
-		}
-		return nil, err
-	}
-	trace.ownsDB = true
-	return trace, nil
-}
-
-func NewPersistTraceWithDB(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *sql.DB) (*PersistTrace, error) {
+func NewPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (*PersistTrace, error) {
 	if provider == nil {
 		return nil, errors.New("provider is required")
 	}
@@ -94,8 +45,8 @@ func NewPersistTraceWithDB(ctx context.Context, provider providers.Provider, pro
 	return trace, nil
 }
 
-func newPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *sql.DB) (*PersistTrace, error) {
-	if _, err := db.ExecContext(ctx, persistTraceSchema); err != nil {
+func newPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (*PersistTrace, error) {
+	if err := persistence.EnsureTraceMessageSchema(ctx, db); err != nil {
 		return nil, err
 	}
 	return &PersistTrace{
@@ -149,19 +100,21 @@ func (s *PersistTrace) Name() string {
 }
 
 func (s *PersistTrace) Close() error {
-	if s.db == nil || !s.ownsDB {
-		return nil
-	}
-	return s.db.Close()
+	return nil
 }
 
 func (s *PersistTrace) storeInput(ctx context.Context, input string) error {
 	if s.db == nil {
 		return nil
 	}
-	metadata := "{}"
-	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (provider, session_id, msg_type, value, metadata) VALUES (?, ?, ?, ?, ?)`,
-		int(s.providerType), s.sessionID, persistTraceMsgTypeInput, input, metadata)
+	record := &persistence.TraceMessageModel{
+		Provider:  int(s.providerType),
+		SessionID: s.sessionID,
+		MsgType:   persistence.TraceInputMsgType(),
+		Value:     input,
+		Metadata:  "{}",
+	}
+	_, err := s.db.NewInsert().Model(record).Exec(ctx)
 	return err
 }
 
@@ -175,8 +128,14 @@ func (s *PersistTrace) storeReceived(ctx context.Context, msg providers.Msg) err
 			metadata = string(encoded)
 		}
 	}
-	_, err := s.db.ExecContext(ctx, `INSERT INTO messages (provider, session_id, msg_type, value, metadata) VALUES (?, ?, ?, ?, ?)`,
-		int(s.providerType), s.sessionID, msg.Type.StorageValue(), msg.Value, metadata)
+	record := &persistence.TraceMessageModel{
+		Provider:  int(s.providerType),
+		SessionID: s.sessionID,
+		MsgType:   msg.Type.StorageValue(),
+		Value:     msg.Value,
+		Metadata:  metadata,
+	}
+	_, err := s.db.NewInsert().Model(record).Exec(ctx)
 	return err
 }
 
@@ -185,7 +144,7 @@ func storageErrorMsg(phase string, err error) providers.Msg {
 		Type:  providers.MsgTypeError,
 		Value: "storage error while " + phase + ": " + err.Error(),
 		Metadata: map[string]string{
-			"component": "sqlite",
+			"component": "persistence",
 			"phase":     phase,
 		},
 	}

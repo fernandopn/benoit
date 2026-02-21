@@ -28,7 +28,7 @@ official Go SDK.
   - filesystem root passed to filesystem-backed tools
   - default: current working directory
 - `-db-path`
-  - sqlite path used for both provider trace logging and per-session provider state
+  - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
@@ -51,7 +51,7 @@ official Go SDK.
   - filesystem root passed to filesystem-backed tools
   - default: current working directory
 - `-db-path`
-  - sqlite path used for both provider trace logging and per-session provider state
+  - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
@@ -66,7 +66,7 @@ official Go SDK.
 ### `list_sessions`
 
 - `-db-path`
-  - sqlite path used for both provider trace logging and per-session provider state
+  - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-fs-root`
   - filesystem root passed to filesystem-backed tools
@@ -82,5 +82,6 @@ official Go SDK.
   simple line-based behavior.
 - Storage errors are surfaced into the chat stream as `MsgTypeError` events
   while preserving normal response messages.
+- Database persistence and trace logging are handled via Bun models and query builders.
 - Telegram mode requires `TELEGRAM_API_KEY` for bot authentication.
 - Telegram session history is isolated per user with session IDs in the format `telegram:<telegram_user_id>`.

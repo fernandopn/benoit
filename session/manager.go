@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -12,13 +11,14 @@ import (
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
 	"github.com/fernandopn/benoit/tools"
+	"github.com/uptrace/bun"
 )
 
 type Config struct {
 	Model                    string
 	OpenAIAPIKey             string
 	OpenAIProviderParams     providers.OpenAIProviderParams
-	DB                       *sql.DB
+	DB                       *bun.DB
 	BypassCompressionBarrier bool
 }
 
@@ -117,7 +117,7 @@ func (f *providerFactory) createProvider(sessionID string) (providers.Provider, 
 	var provider providers.Provider = openAIProvider
 	provider = middleware.NewSessionStoreMiddleware(provider, f.sessionStore, f.provider, sessionID)
 
-	provider, closeTrace, err := middleware.ConfigurePersistTraceWithDB(f.ctx, provider, f.provider, sessionID, f.cfg.DB)
+	provider, closeTrace, err := middleware.ConfigurePersistTrace(f.ctx, provider, f.provider, sessionID, f.cfg.DB)
 	if err != nil {
 		return nil, nil, err
 	}
