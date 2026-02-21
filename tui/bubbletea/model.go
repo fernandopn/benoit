@@ -3,6 +3,7 @@ package bubbletea
 import (
 	"context"
 
+	"github.com/charmbracelet/bubbles/table"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -20,6 +21,11 @@ type model struct {
 
 	vp    viewport.Model
 	input textarea.Model
+	cmds  table.Model
+
+	commandSuggestions      []commandSuggestion
+	commandSuggestionsShown bool
+	commandCompletionPrefix string
 
 	width  int
 	height int
@@ -111,6 +117,28 @@ func newModel(ctx context.Context, cfg Config) model {
 	vp := viewport.New(0, 0)
 	vp.MouseWheelEnabled = true
 
+	cmdTableStyles := table.DefaultStyles()
+	cmdTableStyles.Header = cmdTableStyles.Header.Copy().
+		Foreground(lipgloss.Color("#9FB4CF")).
+		Bold(true)
+	cmdTableStyles.Cell = cmdTableStyles.Cell.Copy().
+		Foreground(lipgloss.Color("#C5D1E0"))
+	cmdTableStyles.Selected = cmdTableStyles.Selected.Copy().
+		Foreground(lipgloss.Color(userForegroundColor)).
+		Background(lipgloss.Color("#2A3444")).
+		Bold(true)
+	cmdTable := table.New(
+		table.WithColumns([]table.Column{
+			{Title: "Command", Width: 14},
+			{Title: "Description", Width: 24},
+		}),
+		table.WithRows(nil),
+		table.WithHeight(1),
+		table.WithFocused(true),
+		table.WithStyles(cmdTableStyles),
+	)
+	cmdTable.Focus()
+
 	muted := lipgloss.Color("#95A3B8")
 	strong := lipgloss.Color("231")
 	warn := lipgloss.Color("203")
@@ -188,6 +216,7 @@ func newModel(ctx context.Context, cfg Config) model {
 		startStream:    cfg.StartStream,
 		vp:             vp,
 		input:          ta,
+		cmds:           cmdTable,
 		blocks:         blocks,
 		headerStyle:    header,
 		subHeaderStyle: subHeader,

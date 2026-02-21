@@ -8,16 +8,28 @@ import (
 )
 
 const (
-	userBackgroundColor    = "#1C1C1C"
-	userForegroundColor    = "#E6EDF3"
-	toolResultPreviewLines = 4
-	toolResultExpandLabel  = "[expand]"
+	userBackgroundColor      = "#1C1C1C"
+	userForegroundColor      = "#E6EDF3"
+	toolResultPreviewLines   = 4
+	toolResultExpandLabel    = "[expand]"
+	commandSuggestionMinRows = 10
 )
 
 const (
 	DefaultWelcomeText = "Welcome. Type a prompt and press Enter."
-	DefaultHelpText    = "Enter to send | /compress to compact | /exit to quit | PgUp/PgDn or mouse wheel to scroll"
+	DefaultHelpText    = "Enter to send | Tab to complete /commands | /compress to compact | /exit to quit | PgUp/PgDn or mouse wheel to scroll"
 )
+
+type commandSuggestion struct {
+	Command     string
+	Description string
+}
+
+var knownSlashCommands = []commandSuggestion{
+	{Command: "/compress", Description: "compact context"},
+	{Command: "/exit", Description: "quit session"},
+	{Command: "/quit", Description: "quit session"},
+}
 
 type StreamStarter func(ctx context.Context, prompt string) (<-chan providers.Msg, context.CancelFunc, error)
 

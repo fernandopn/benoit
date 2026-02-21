@@ -34,6 +34,55 @@ func max(a, b int) int {
 	return b
 }
 
+func (m *model) handleCommandKey(msg tea.KeyMsg) (bool, tea.Cmd) {
+	switch msg.Type {
+	case tea.KeyUp, tea.KeyDown:
+		if !m.commandSuggestionsShown {
+			return false, nil
+		}
+		var cmd tea.Cmd
+		m.cmds, cmd = m.cmds.Update(msg)
+		return true, cmd
+	case tea.KeyTab:
+		return m.completeSlashCommand()
+	default:
+		return false, nil
+	}
+}
+
+func (m *model) completeSlashCommand() (bool, tea.Cmd) {
+	prefix, suffix, ok := splitSlashCommandInput(m.input.Value())
+	if !ok {
+		if m.commandSuggestionsShown {
+			m.hideCommandSuggestions()
+		}
+		return false, nil
+	}
+
+	matches := commandSuggestionsForPrefix(prefix)
+	if len(matches) == 0 {
+		m.hideCommandSuggestions()
+		return true, nil
+	}
+
+	if len(matches) == 1 {
+		m.applyCommandCompletion(matches[0].Command, suffix)
+		m.hideCommandSuggestions()
+		return true, nil
+	}
+
+	if m.commandSuggestionsShown && strings.EqualFold(strings.TrimSpace(m.commandCompletionPrefix), strings.TrimSpace(prefix)) {
+		if selected, ok := m.selectedCommandSuggestion(); ok {
+			m.applyCommandCompletion(selected, suffix)
+			m.hideCommandSuggestions()
+			return true, nil
+		}
+	}
+
+	m.showCommandSuggestions(prefix, matches)
+	return true, nil
+}
+
 func isSoftNewlineMsg(msg tea.Msg) bool {
 	if km, ok := msg.(tea.KeyMsg); ok {
 		if km.String() == "shift+enter" {
@@ -239,7 +288,14 @@ func (m *model) relayout(followBottom bool) {
 	contentWidth := max(10, m.width-2-inputFrameW)
 	m.input.SetWidth(contentWidth)
 
-	inputAreaHeight := m.input.Height() + 2 + inputFrameH
+	inputCoreHeight := m.input.Height() + 2 + inputFrameH
+	maxSuggestionLines := m.height - headerHeight - gapHeight*2 - inputCoreHeight - bodyFrameH - footerHeight - 1
+	if maxSuggestionLines < 1 {
+		maxSuggestionLines = 1
+	}
+	m.updateCommandTableLayout(contentWidth, maxSuggestionLines)
+
+	inputAreaHeight := inputCoreHeight + m.commandSuggestionHeight()
 	viewportHeight := m.height - headerHeight - gapHeight*2 - inputAreaHeight - bodyFrameH - footerHeight
 	m.vp.Width = max(10, m.width-bodyFrameW)
 	m.vp.Height = max(1, viewportHeight)

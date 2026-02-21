@@ -140,7 +140,7 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search"}
+		expected := []string{"code_interpreter", "web_search", "get_time"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -157,7 +157,7 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "maton_gcalendar", "maton_gmail"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "maton_gcalendar", "maton_gmail"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}

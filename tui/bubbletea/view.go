@@ -14,7 +14,6 @@ func (m model) View() string {
 	header := m.headerStyle.Width(width).Render(m.headerLine())
 	subHeader := m.subHeaderStyle.Width(width).Render(m.subHeaderLine())
 	body := m.bodyStyle.Render(m.vp.View())
-	input := m.renderInputArea()
 
 	lines := []string{
 		header,
@@ -22,8 +21,11 @@ func (m model) View() string {
 		"",
 		body,
 		"",
-		input,
 	}
+	if suggestions := m.renderCommandSuggestions(); suggestions != "" {
+		lines = append(lines, suggestions)
+	}
+	lines = append(lines, m.renderInputArea())
 	lines = append(lines, m.footerLine())
 	return strings.Join(lines, "\n")
 }

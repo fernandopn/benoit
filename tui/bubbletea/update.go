@@ -29,8 +29,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.vp, cmd = m.vp.Update(msg)
 			cmds = append(cmds, cmd)
 		}
+		handled, keyCmd := m.handleCommandKey(typed)
+		if handled {
+			cmds = append(cmds, keyCmd)
+			m.adjustInputHeight()
+			return m, batchCmds(cmds)
+		}
+		beforeInput := m.input.Value()
 		m.input, cmd = m.input.Update(msg)
 		cmds = append(cmds, cmd)
+		if m.commandSuggestionsShown && m.input.Value() != beforeInput {
+			m.hideCommandSuggestions()
+		}
 	default:
 		m.vp, cmd = m.vp.Update(msg)
 		cmds = append(cmds, cmd)
@@ -56,6 +66,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.streaming {
 				return m, batchCmds(cmds)
 			}
+			if m.commandSuggestionsShown {
+				if selected, ok := m.selectedCommandSuggestion(); ok {
+					_, suffix, split := splitSlashCommandInput(m.input.Value())
+					if !split {
+						suffix = ""
+					}
+					m.applyCommandCompletion(selected, suffix)
+				}
+				m.hideCommandSuggestions()
+			}
 			raw := m.input.Value()
 			if strings.TrimSpace(raw) == "" {
 				return m, nil
@@ -67,6 +87,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 
 			m.cancelStreamIfAny()
+			m.hideCommandSuggestions()
 			m.blocks = append(m.blocks, block{Kind: blockUser, Text: prompt})
 			m.input.Reset()
 
