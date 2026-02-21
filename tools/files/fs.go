@@ -3,7 +3,6 @@ package files
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -29,30 +28,40 @@ func (osFS) Getwd() (string, error) {
 }
 
 // NewRestrictedFS returns a filesystem restricted to the provided root.
-// If root is empty, the current working directory is used.
 func NewRestrictedFS(root string) (FileSystem, error) {
 	return NewRestrictedFSWithBase(osFS{}, root)
 }
 
 // NewRestrictedFSWithBase returns a filesystem restricted to the provided root.
 func NewRestrictedFSWithBase(base FileSystem, root string) (FileSystem, error) {
-	if base == nil {
-		base = osFS{}
-	}
 	root = strings.TrimSpace(root)
 	if root == "" {
 		return nil, fmt.Errorf("root cannot be empty")
 	}
-	abs, err := filepath.Abs(root)
+	return NewRestrictedFSWithBaseAndRoots(base, []string{root})
+}
+
+// NewRestrictedFSWithRoots returns a filesystem restricted to the provided roots.
+func NewRestrictedFSWithRoots(roots []string) (FileSystem, error) {
+	return NewRestrictedFSWithBaseAndRoots(osFS{}, roots)
+}
+
+// NewRestrictedFSWithBaseAndRoots returns a filesystem restricted to one or more roots.
+func NewRestrictedFSWithBaseAndRoots(base FileSystem, roots []string) (FileSystem, error) {
+	if base == nil {
+		base = osFS{}
+	}
+	validator, err := NewFileSystemPathValidator(roots)
 	if err != nil {
 		return nil, err
 	}
-	return restrictedFS{base: base, root: filepath.Clean(abs)}, nil
+	return restrictedFS{base: base, root: validator.PrimaryPrefix(), validator: validator}, nil
 }
 
 type restrictedFS struct {
-	base FileSystem
-	root string
+	base      FileSystem
+	root      string
+	validator *FileSystemPathValidator
 }
 
 func (r restrictedFS) ReadDir(name string) ([]os.DirEntry, error) {
@@ -79,22 +88,8 @@ func (r restrictedFS) Getwd() (string, error) {
 }
 
 func (r restrictedFS) resolve(name string) (string, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return "", fmt.Errorf("path cannot be empty")
+	if r.validator == nil {
+		return "", fmt.Errorf("filesystem path validator is not configured")
 	}
-	var abs string
-	if filepath.IsAbs(name) {
-		abs = filepath.Clean(name)
-	} else {
-		abs = filepath.Clean(filepath.Join(r.root, name))
-	}
-	rel, err := filepath.Rel(r.root, abs)
-	if err != nil {
-		return "", err
-	}
-	if rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return "", fmt.Errorf("path outside allowed root: %s", r.root)
-	}
-	return abs, nil
+	return r.validator.Resolve(name, r.root)
 }
