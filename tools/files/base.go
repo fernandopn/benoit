@@ -31,6 +31,7 @@ var (
 type FileSystem interface {
 	ReadDir(name string) ([]os.DirEntry, error)
 	ReadFile(name string) ([]byte, error)
+	MkdirAll(name string) error
 	WriteFile(name string, data []byte) error
 	RemoveFile(name string) error
 	Getwd() (string, error)

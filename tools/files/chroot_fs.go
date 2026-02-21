@@ -66,6 +66,14 @@ func (c chrootFS) ReadFile(name string) ([]byte, error) {
 	return c.base.ReadFile(hostPath)
 }
 
+func (c chrootFS) MkdirAll(name string) error {
+	hostPath, err := c.resolve(name)
+	if err != nil {
+		return err
+	}
+	return c.base.MkdirAll(hostPath)
+}
+
 func (c chrootFS) WriteFile(name string, data []byte) error {
 	hostPath, err := c.resolve(name)
 	if err != nil {

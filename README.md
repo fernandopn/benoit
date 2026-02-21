@@ -81,6 +81,7 @@ official Go SDK.
 - TUI mode enables filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
 - File tool paths are virtualized when `-fs-root` is set: `/` maps to the configured sandbox root on disk, and all resolved paths are still validated against the allowed prefix policy.
 - In sandbox mode, do not assume `/mnt/data` exists; discover available roots with `glob` using `path: "/"` and `pattern: "*"`.
+- `write` creates parent directories automatically when the target path is inside missing directories within the sandbox.
 - `send_channel_message` is enabled only in `tui` mode when `TELEGRAM_API_KEY` is set. It accepts `channel`, `user_id`, and `message`.
 - `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
 - `maton_gcalendar` `list_events` requires `query.timeMin` and `query.timeMax` (RFC3339) to keep event queries bounded.

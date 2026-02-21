@@ -12,6 +12,7 @@ type fakeFS struct {
 	readDirErr    map[string]error
 	files         map[string][]byte
 	readFileErr   map[string]error
+	mkdirAllErr   map[string]error
 	writeFileErr  map[string]error
 	removeFileErr map[string]error
 	cwd           string
@@ -42,6 +43,13 @@ func (f fakeFS) ReadFile(name string) ([]byte, error) {
 		return nil, errors.New("is a directory")
 	}
 	return nil, errors.New("path not found")
+}
+
+func (f fakeFS) MkdirAll(name string) error {
+	if err, ok := f.mkdirAllErr[name]; ok {
+		return err
+	}
+	return nil
 }
 
 func (f fakeFS) WriteFile(name string, data []byte) error {

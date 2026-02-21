@@ -15,10 +15,14 @@ func (osFS) ReadFile(name string) ([]byte, error) {
 	return os.ReadFile(name)
 }
 
+func (osFS) MkdirAll(name string) error {
+	return os.MkdirAll(name, 0o755)
+}
+
 func (osFS) WriteFile(name string, data []byte) error {
 	dir := filepath.Dir(name)
 	if dir != "" && dir != "." {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
+		if err := (osFS{}).MkdirAll(dir); err != nil {
 			return err
 		}
 	}

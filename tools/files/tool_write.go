@@ -3,6 +3,7 @@ package files
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/responses"
@@ -29,7 +30,7 @@ func (w *WriteFileTool) Definition() responses.ToolUnionParam {
 	return responses.ToolUnionParam{
 		OfFunction: &responses.FunctionToolParam{
 			Name:        w.Name(),
-			Description: openai.String("Write text content to a file path in the filesystem sandbox. Overwrites existing file content."),
+			Description: openai.String("Write text content to a file path in the filesystem sandbox. Overwrites existing file content and creates parent directories when needed."),
 			Parameters: map[string]any{
 				"type": "object",
 				"properties": map[string]any{
@@ -63,6 +64,13 @@ func (w *WriteFileTool) Call(ctx context.Context, args map[string]any) (string, 
 	content, err := requiredRawStringArg(args, contentArgName)
 	if err != nil {
 		return toolError(err), nil
+	}
+
+	parentDir := filepath.Dir(path)
+	if parentDir != "" && parentDir != "." {
+		if err := w.fs.MkdirAll(parentDir); err != nil {
+			return toolError(err), nil
+		}
 	}
 
 	if err := w.fs.WriteFile(path, []byte(content)); err != nil {
