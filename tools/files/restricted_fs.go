@@ -6,27 +6,6 @@ import (
 	"strings"
 )
 
-// FileSystem abstracts filesystem access for tools.
-type FileSystem interface {
-	ReadDir(name string) ([]os.DirEntry, error)
-	ReadFile(name string) ([]byte, error)
-	Getwd() (string, error)
-}
-
-type osFS struct{}
-
-func (osFS) ReadDir(name string) ([]os.DirEntry, error) {
-	return os.ReadDir(name)
-}
-
-func (osFS) ReadFile(name string) ([]byte, error) {
-	return os.ReadFile(name)
-}
-
-func (osFS) Getwd() (string, error) {
-	return os.Getwd()
-}
-
 // NewRestrictedFS returns a filesystem restricted to the provided root.
 func NewRestrictedFS(root string) (FileSystem, error) {
 	return NewRestrictedFSWithBase(osFS{}, root)

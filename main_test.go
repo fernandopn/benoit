@@ -222,13 +222,15 @@ func TestLoadTUIConfigSessionIDFlag(t *testing.T) {
 }
 
 func TestSelectedTools(t *testing.T) {
+	const fsRoot = "/tmp/benoit-tools"
+
 	t.Run("without maton", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{})
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -240,12 +242,12 @@ func TestSelectedTools(t *testing.T) {
 	})
 
 	t.Run("with maton", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Credentials: CredentialConfig{MatonAPIKey: "test-key"}})
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, Credentials: CredentialConfig{MatonAPIKey: "test-key"}})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "maton_gcalendar", "maton_gmail"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file", "maton_gcalendar", "maton_gmail"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -257,12 +259,12 @@ func TestSelectedTools(t *testing.T) {
 	})
 
 	t.Run("with telegram", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandTUI, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "send_channel_message"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file", "send_channel_message"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -274,12 +276,12 @@ func TestSelectedTools(t *testing.T) {
 	})
 
 	t.Run("with telegram and maton", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandTUI, Credentials: CredentialConfig{TelegramBotToken: "telegram-key", MatonAPIKey: "test-key"}})
+		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, Credentials: CredentialConfig{TelegramBotToken: "telegram-key", MatonAPIKey: "test-key"}})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		names := toolNames(toolSet)
-		expected := []string{"code_interpreter", "web_search", "get_time", "send_channel_message", "maton_gcalendar", "maton_gmail"}
+		expected := []string{"code_interpreter", "web_search", "get_time", "list_files", "get_current_directory", "read_file", "send_channel_message", "maton_gcalendar", "maton_gmail"}
 		if len(names) != len(expected) {
 			t.Fatalf("unexpected tool count: %v", names)
 		}
@@ -291,7 +293,7 @@ func TestSelectedTools(t *testing.T) {
 	})
 
 	t.Run("telegram disabled on channel_listener", func(t *testing.T) {
-		toolSet, err := selectedTools(Config{Command: CommandChannelListener, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		toolSet, err := selectedTools(Config{Command: CommandChannelListener, FSRoot: fsRoot, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -304,6 +306,13 @@ func TestSelectedTools(t *testing.T) {
 			if names[i] != want {
 				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
 			}
+		}
+	})
+
+	t.Run("tui requires fs root for file tools", func(t *testing.T) {
+		_, err := selectedTools(Config{Command: CommandTUI, FSRoot: "  "})
+		if err == nil {
+			t.Fatal("expected fs root validation error")
 		}
 	})
 }

@@ -48,7 +48,7 @@ official Go SDK.
 - `-timeout` request timeout (for example: `45s`, `2m`)
   - default: `20m`
 - `-fs-root`
-  - filesystem root passed to filesystem-backed tools
+  - reserved for shared config; filesystem tools are enabled only in `tui`
   - default: current working directory
 - `-db-path`
   - database path used for both provider trace logging and per-session provider state
@@ -69,13 +69,14 @@ official Go SDK.
   - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
 - `-fs-root`
-  - filesystem root passed to filesystem-backed tools
+  - reserved for shared config; not used by `list_sessions`
   - default: current working directory
 
 ## Behavior notes
 
 - Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
-- Tools always enabled: `code_interpreter`, `web_search`, `get_time`.
+- Tools always enabled in provider commands: `code_interpreter`, `web_search`, `get_time`.
+- TUI mode also enables filesystem tools scoped by `-fs-root`: `list_files`, `get_current_directory`, `read_file`.
 - `send_channel_message` is enabled only in `tui` mode when `TELEGRAM_API_KEY` is set. It accepts `channel`, `user_id`, and `message`.
 - `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
 - `maton_gcalendar` `list_events` requires `query.timeMin` and `query.timeMax` (RFC3339) to keep event queries bounded.

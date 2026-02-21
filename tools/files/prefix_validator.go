@@ -50,10 +50,10 @@ func (v *FileSystemPathValidator) Resolve(path string, relativeBase string) (str
 	}
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return "", fmt.Errorf("path cannot be empty")
+		return "", errPathCannotBeEmpty
 	}
 
-	absPath := ""
+	var absPath string
 	if filepath.IsAbs(path) {
 		absPath = filepath.Clean(path)
 	} else {
@@ -79,7 +79,7 @@ func (v *FileSystemPathValidator) Validate(path string) error {
 	}
 	path = strings.TrimSpace(path)
 	if path == "" {
-		return fmt.Errorf("path cannot be empty")
+		return errPathCannotBeEmpty
 	}
 
 	absPath := path

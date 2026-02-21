@@ -17,6 +17,7 @@ import (
 	"github.com/fernandopn/benoit/providers"
 	"github.com/fernandopn/benoit/session"
 	"github.com/fernandopn/benoit/tools"
+	filetools "github.com/fernandopn/benoit/tools/files"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
 )
@@ -350,6 +351,13 @@ func selectedTools(cfg Config) ([]tools.Tool, error) {
 		tools.NewOpenAIWebSearchTool(),
 		tools.NewClockTool(),
 	}
+	fileToolSet, err := configuredFileTools(cfg)
+	if err != nil {
+		return nil, err
+	}
+	if len(fileToolSet) > 0 {
+		toolSet = append(toolSet, fileToolSet...)
+	}
 
 	channelBindings, err := configuredToolChannelBindings(cfg)
 	if err != nil {
@@ -372,6 +380,13 @@ func selectedTools(cfg Config) ([]tools.Tool, error) {
 	}
 
 	return toolSet, nil
+}
+
+func configuredFileTools(cfg Config) ([]tools.Tool, error) {
+	if cfg.Command != CommandTUI {
+		return nil, nil
+	}
+	return filetools.NewToolSet(cfg.FSRoot)
 }
 
 func configuredToolChannelBindings(cfg Config) ([]tools.ChannelBinding, error) {
