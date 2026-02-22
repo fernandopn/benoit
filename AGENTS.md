@@ -41,5 +41,5 @@ If your Go module cache is not writable, use a custom cache:
 
 ## Usage
 - Type a message after the `>: ` prompt.
-- Type `/compress` (or `/compress <max_words>`) to compact and re-seed context.
+- Type `/compact` (or `/compact <max_words>`) to compact and re-seed context.
 - Type `/exit` or `/quit` to leave.

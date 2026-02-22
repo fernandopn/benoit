@@ -14,6 +14,10 @@ type persistTraceStubProvider struct {
 	messages []providers.Msg
 }
 
+type persistTraceStoreStub struct {
+	insertErr error
+}
+
 func (s *persistTraceStubProvider) Chat(_ context.Context, _ string) <-chan providers.Msg {
 	out := make(chan providers.Msg, len(s.messages))
 	go func() {
@@ -40,6 +44,14 @@ func (s *persistTraceStubProvider) Name() string {
 	return "stub-provider"
 }
 
+func (s *persistTraceStoreStub) Init(_ context.Context) error {
+	return nil
+}
+
+func (s *persistTraceStoreStub) InsertMessage(_ context.Context, _ *persistence.TraceMessageModel) error {
+	return s.insertErr
+}
+
 func TestPersistTracePersistsMessages(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "chat.db")
 	db, closeDB, err := persistence.ConfigureDB(context.Background(), dbPath)
@@ -58,7 +70,11 @@ func TestPersistTracePersistsMessages(t *testing.T) {
 		{Type: providers.MsgTypeReasoningSummaryFinal, Value: "thinking"},
 		{Type: providers.MsgTypeToolResult, Value: "ok"},
 	}}
-	trace, err := NewPersistTrace(context.Background(), provider, providers.ProviderTypeOpenAI, "session-77", db)
+	traceStore, err := persistence.NewTraceMessageStore(context.Background(), db)
+	if err != nil {
+		t.Fatalf("new trace store: %v", err)
+	}
+	trace, err := NewPersistTrace(context.Background(), provider, providers.ProviderTypeOpenAI, "session-77", traceStore)
 	if err != nil {
 		t.Fatalf("new persist trace: %v", err)
 	}
@@ -95,7 +111,7 @@ func TestPersistTracePersistsMessages(t *testing.T) {
 }
 
 func TestPersistTracePropagatesStorageErrors(t *testing.T) {
-	db, closeDB, err := persistence.ConfigureDB(context.Background(), filepath.Join(t.TempDir(), "closed.db"))
+	_, closeDB, err := persistence.ConfigureDB(context.Background(), filepath.Join(t.TempDir(), "closed.db"))
 	if err != nil {
 		t.Fatalf("configure db: %v", err)
 	}
@@ -110,7 +126,7 @@ func TestPersistTracePropagatesStorageErrors(t *testing.T) {
 		provider:     &persistTraceStubProvider{messages: []providers.Msg{{Type: providers.MsgTypeChatFinal, Value: "hello"}}},
 		providerType: providers.ProviderTypeOpenAI,
 		sessionID:    "session-1",
-		db:           db,
+		store:        &persistTraceStoreStub{insertErr: errors.New("closed db")},
 	}
 
 	out := trace.Chat(context.Background(), "hi")
@@ -145,7 +161,11 @@ func TestNewPersistTrace(t *testing.T) {
 		if closeDB != nil {
 			defer closeDB()
 		}
-		configured, err := NewPersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", db)
+		traceStore, err := persistence.NewTraceMessageStore(context.Background(), db)
+		if err != nil {
+			t.Fatalf("new trace store: %v", err)
+		}
+		configured, err := NewPersistTrace(context.Background(), base, providers.ProviderTypeOpenAI, "session-1", traceStore)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

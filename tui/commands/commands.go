@@ -9,18 +9,20 @@ import (
 const DefaultCompressionMaxWords = 300
 
 const (
-	CompressCommand = "/compress"
+	CompactCommand = "/compact"
+	// CompressCommand is kept for compatibility with existing imports.
+	CompressCommand = CompactCommand
 	ExitCommand     = "/exit"
 	QuitCommand     = "/quit"
 )
 
-const compressUsage = "usage: /compress [max_words]"
+const compactUsage = "usage: /compact [max_words]"
 
 type Kind int
 
 const (
 	KindNone Kind = iota
-	KindCompress
+	KindCompact
 	KindExit
 )
 
@@ -36,18 +38,18 @@ func Parse(input string) (Parsed, error) {
 	}
 
 	switch strings.ToLower(parts[0]) {
-	case CompressCommand:
+	case CompactCommand:
 		if len(parts) == 1 {
-			return Parsed{Kind: KindCompress, MaxWords: DefaultCompressionMaxWords}, nil
+			return Parsed{Kind: KindCompact, MaxWords: DefaultCompressionMaxWords}, nil
 		}
 		if len(parts) != 2 {
-			return Parsed{Kind: KindCompress}, errors.New(compressUsage)
+			return Parsed{Kind: KindCompact}, errors.New(compactUsage)
 		}
 		maxWords, err := strconv.Atoi(strings.TrimSpace(parts[1]))
 		if err != nil || maxWords <= 0 {
-			return Parsed{Kind: KindCompress}, errors.New(compressUsage)
+			return Parsed{Kind: KindCompact}, errors.New(compactUsage)
 		}
-		return Parsed{Kind: KindCompress, MaxWords: maxWords}, nil
+		return Parsed{Kind: KindCompact, MaxWords: maxWords}, nil
 	case ExitCommand, QuitCommand:
 		if len(parts) == 1 {
 			return Parsed{Kind: KindExit}, nil
@@ -58,12 +60,17 @@ func Parse(input string) (Parsed, error) {
 	}
 }
 
-func ParseCompress(input string) (int, bool, error) {
+func ParseCompact(input string) (int, bool, error) {
 	parsed, err := Parse(input)
-	if parsed.Kind != KindCompress {
+	if parsed.Kind != KindCompact {
 		return 0, false, nil
 	}
 	return parsed.MaxWords, true, err
+}
+
+// ParseCompress is kept for compatibility with existing callers.
+func ParseCompress(input string) (int, bool, error) {
+	return ParseCompact(input)
 }
 
 func IsExit(input string) bool {

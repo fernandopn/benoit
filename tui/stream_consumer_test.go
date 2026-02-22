@@ -118,25 +118,71 @@ func collectMsgs(ch <-chan providers.Msg) []providers.Msg {
 	return out
 }
 
-func TestParseCompressCommand(t *testing.T) {
-	maxWords, ok, err := parseCompressCommand("/compress")
+func TestParseCompactCommand(t *testing.T) {
+	maxWords, ok, err := parseCompactCommand("/compact")
 	if err != nil || !ok || maxWords != defaultCompressionMaxWords {
 		t.Fatalf("unexpected parse result: maxWords=%d ok=%v err=%v", maxWords, ok, err)
 	}
 
-	maxWords, ok, err = parseCompressCommand("/compress 77")
+	maxWords, ok, err = parseCompactCommand("/compact 77")
 	if err != nil || !ok || maxWords != 77 {
 		t.Fatalf("unexpected parse with explicit words: maxWords=%d ok=%v err=%v", maxWords, ok, err)
 	}
 
-	_, ok, err = parseCompressCommand("hello")
+	_, ok, err = parseCompactCommand("hello")
 	if err != nil || ok {
 		t.Fatalf("expected non-command prompt, got ok=%v err=%v", ok, err)
 	}
 
-	_, ok, err = parseCompressCommand("/compress nope")
+	_, ok, err = parseCompactCommand("/compact nope")
 	if !ok || err == nil {
 		t.Fatalf("expected command parse error, got ok=%v err=%v", ok, err)
+	}
+}
+
+func TestStreamStartForProviderWithCustomParser(t *testing.T) {
+	provider := &commandProviderStub{}
+	parserCalls := 0
+	start := streamStartForProviderWithCommandParser(provider, "session-42", func(prompt string) (int, bool, error) {
+		parserCalls++
+		if strings.TrimSpace(prompt) == "/compact" {
+			return 0, true, nil
+		}
+		return 0, false, nil
+	})
+
+	msgs := collectMsgs(start(context.Background(), "/compact"))
+	if parserCalls != 1 {
+		t.Fatalf("expected parser call for compact prompt, got %d", parserCalls)
+	}
+	if provider.performCalls != 1 {
+		t.Fatalf("expected compression branch, got %d calls", provider.performCalls)
+	}
+	if provider.chatCalls != 0 || provider.sessionCalls != 0 {
+		t.Fatalf("expected no chat call for compact command, got chat=%d session=%d", provider.chatCalls, provider.sessionCalls)
+	}
+	if len(msgs) == 0 {
+		t.Fatalf("expected compression stream messages")
+	}
+
+	provider = &commandProviderStub{}
+	parserCalls = 0
+	start = streamStartForProviderWithCommandParser(provider, "session-42", func(prompt string) (int, bool, error) {
+		parserCalls++
+		return 0, false, nil
+	})
+	msgs = collectMsgs(start(context.Background(), "hello"))
+	if parserCalls != 1 {
+		t.Fatalf("expected parser call for normal prompt, got %d", parserCalls)
+	}
+	if provider.performCalls != 0 {
+		t.Fatalf("expected no compression for non-command prompt, got %d calls", provider.performCalls)
+	}
+	if provider.chatCalls != 1 {
+		t.Fatalf("expected chat call, got %d", provider.chatCalls)
+	}
+	if len(msgs) != 1 || msgs[0].Value != "session chat" {
+		t.Fatalf("unexpected stream messages: %#v", msgs)
 	}
 }
 
@@ -157,13 +203,13 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 		},
 	}
 	start := streamStartForProvider(provider, "session-42")
-	msgs := collectMsgs(start(context.Background(), "/compress"))
+	msgs := collectMsgs(start(context.Background(), "/compact"))
 
 	if provider.performCalls != 1 {
 		t.Fatalf("expected one compression call, got %d", provider.performCalls)
 	}
 	if provider.chatCalls != 0 || provider.sessionCalls != 0 {
-		t.Fatalf("expected no chat calls for /compress, got chat=%d session=%d", provider.chatCalls, provider.sessionCalls)
+		t.Fatalf("expected no chat calls for /compact, got chat=%d session=%d", provider.chatCalls, provider.sessionCalls)
 	}
 	if provider.lastSessionID != "session-42" {
 		t.Fatalf("unexpected session ID: %q", provider.lastSessionID)
@@ -197,7 +243,7 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 func TestStreamStartForProviderCompressParsesWordLimit(t *testing.T) {
 	provider := &commandProviderStub{}
 	start := streamStartForProvider(provider, "")
-	msgs := collectMsgs(start(context.Background(), "/compress 123"))
+	msgs := collectMsgs(start(context.Background(), "/compact 123"))
 
 	if provider.performCalls != 1 {
 		t.Fatalf("expected one compression call, got %d", provider.performCalls)
@@ -231,7 +277,7 @@ func TestStreamStartForProviderCompressParsesWordLimit(t *testing.T) {
 func TestStreamStartForProviderCompressError(t *testing.T) {
 	provider := &commandProviderStub{performErr: errors.New("boom")}
 	start := streamStartForProvider(provider, "")
-	msgs := collectMsgs(start(context.Background(), "/compress"))
+	msgs := collectMsgs(start(context.Background(), "/compact"))
 
 	if len(msgs) != 1 {
 		t.Fatalf("expected a single error message, got %d", len(msgs))

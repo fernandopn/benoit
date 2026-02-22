@@ -8,32 +8,29 @@ import (
 
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
-	"github.com/fernandopn/benoit/session"
-	"github.com/uptrace/bun"
+	"github.com/fernandopn/benoit/sessionid"
 )
 
 type PersistTrace struct {
 	provider     providers.Provider
 	providerType providers.ProviderType
 	sessionID    string
-	db           *bun.DB
+	store        persistence.TraceMessageStore
 }
 
-func NewPersistTrace(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, db *bun.DB) (*PersistTrace, error) {
+func NewPersistTrace(_ context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string, store persistence.TraceMessageStore) (*PersistTrace, error) {
 	if provider == nil {
 		return nil, errors.New("provider is required")
 	}
-	if db == nil {
-		return nil, errors.New("db is required")
+	if store == nil {
+		return nil, errors.New("store is required")
 	}
-	if err := persistence.EnsureTraceMessageSchema(ctx, db); err != nil {
-		return nil, err
-	}
+
 	return &PersistTrace{
 		provider:     provider,
 		providerType: providerType,
-		sessionID:    session.NormalizeSessionID(sessionID),
-		db:           db,
+		sessionID:    sessionid.Normalize(sessionID),
+		store:        store,
 	}, nil
 }
 
@@ -84,7 +81,7 @@ func (s *PersistTrace) Close() error {
 }
 
 func (s *PersistTrace) storeInput(ctx context.Context, input string) error {
-	if s.db == nil {
+	if s.store == nil {
 		return nil
 	}
 	record := &persistence.TraceMessageModel{
@@ -94,12 +91,12 @@ func (s *PersistTrace) storeInput(ctx context.Context, input string) error {
 		Value:     input,
 		Metadata:  "{}",
 	}
-	_, err := s.db.NewInsert().Model(record).Exec(ctx)
+	err := s.store.InsertMessage(ctx, record)
 	return err
 }
 
 func (s *PersistTrace) storeReceived(ctx context.Context, msg providers.Msg) error {
-	if s.db == nil {
+	if s.store == nil {
 		return nil
 	}
 	metadata := "{}"
@@ -115,7 +112,7 @@ func (s *PersistTrace) storeReceived(ctx context.Context, msg providers.Msg) err
 		Value:     msg.Value,
 		Metadata:  metadata,
 	}
-	_, err := s.db.NewInsert().Model(record).Exec(ctx)
+	err := s.store.InsertMessage(ctx, record)
 	return err
 }
 

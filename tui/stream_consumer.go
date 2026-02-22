@@ -17,6 +17,8 @@ const defaultCompressionMaxWords = tuicmd.DefaultCompressionMaxWords
 
 type streamStarter func(context.Context, string) <-chan providers.Msg
 
+type compactCommandParser func(string) (int, bool, error)
+
 type streamCallbacks struct {
 	OnChat              func(string)
 	OnReasoning         func(string)
@@ -28,25 +30,32 @@ type streamCallbacks struct {
 }
 
 func streamStartForProvider(provider providers.Provider, sessionID string) streamStarter {
+	return streamStartForProviderWithCommandParser(provider, sessionID, parseCompactCommand)
+}
+
+func streamStartForProviderWithCommandParser(provider providers.Provider, sessionID string, parseCommand compactCommandParser) streamStarter {
 	if provider == nil {
 		return nil
 	}
 	sessionID = strings.TrimSpace(sessionID)
+	if parseCommand == nil {
+		parseCommand = parseCompactCommand
+	}
 	startChat := func(ctx context.Context, prompt string) <-chan providers.Msg {
 		return provider.Chat(providers.WithSessionID(ctx, sessionID), prompt)
 	}
 
 	return func(ctx context.Context, prompt string) <-chan providers.Msg {
-		if commandStream, ok := startCommandStream(ctx, provider, sessionID, prompt); ok {
+		if commandStream, ok := startCommandStream(ctx, provider, sessionID, prompt, parseCommand); ok {
 			return commandStream
 		}
 		return startChat(ctx, prompt)
 	}
 }
 
-func startCommandStream(ctx context.Context, provider providers.Provider, sessionID string, prompt string) (<-chan providers.Msg, bool) {
-	maxWords, isCompress, parseErr := parseCompressCommand(prompt)
-	if !isCompress {
+func startCommandStream(ctx context.Context, provider providers.Provider, sessionID string, prompt string, parseCommand compactCommandParser) (<-chan providers.Msg, bool) {
+	maxWords, isCompact, parseErr := parseCommand(prompt)
+	if !isCompact {
 		return nil, false
 	}
 	if parseErr != nil {
@@ -73,8 +82,8 @@ func startCommandStream(ctx context.Context, provider providers.Provider, sessio
 	return out, true
 }
 
-func parseCompressCommand(prompt string) (int, bool, error) {
-	return tuicmd.ParseCompress(prompt)
+func parseCompactCommand(prompt string) (int, bool, error) {
+	return tuicmd.ParseCompact(prompt)
 }
 
 func singleErrorStream(errText string) <-chan providers.Msg {

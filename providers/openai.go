@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/fernandopn/benoit/sessionid"
 	"github.com/fernandopn/benoit/tools"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
@@ -80,8 +81,6 @@ type OpenAIProviderParams struct {
 
 type OpenAIParams = OpenAIProviderParams
 
-const defaultOpenAISessionID = "__default__"
-
 type openAIState struct {
 	mu                 sync.Mutex
 	previousResponseID string
@@ -89,14 +88,6 @@ type openAIState struct {
 
 func newOpenAIState() *openAIState {
 	return &openAIState{}
-}
-
-func normalizeSessionID(sessionID string) string {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return defaultOpenAISessionID
-	}
-	return sessionID
 }
 
 func (s *openAIState) get() string {
@@ -134,7 +125,7 @@ func newOpenAI(model string, apiKey string, params OpenAIProviderParams, toolSet
 	provider := &OpenAI{
 		client:     newOpenAIClientAdapter(apiKey),
 		state:      newOpenAIState(),
-		sessionID:  normalizeSessionID(params.SessionID),
+		sessionID:  sessionid.Normalize(params.SessionID),
 		model:      model,
 		toolRunner: parallelToolRunner{},
 		params:     params,

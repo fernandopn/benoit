@@ -7,22 +7,19 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/fernandopn/benoit/sessionid"
 	"github.com/google/uuid"
 )
 
 const (
-	DefaultSessionID = "__default__"
+	DefaultSessionID = sessionid.DefaultSessionID
 	maxSessionIDLen  = 256
 )
 
 var errSessionIDHasControlChars = errors.New("session ID cannot contain control characters")
 
 func NormalizeSessionID(sessionID string) string {
-	sessionID = strings.TrimSpace(sessionID)
-	if sessionID == "" {
-		return DefaultSessionID
-	}
-	return sessionID
+	return sessionid.Normalize(sessionID)
 }
 
 func ValidateSessionID(sessionID string) error {

@@ -21,7 +21,6 @@ import (
 	filetools "github.com/fernandopn/benoit/tools/files"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
-	"github.com/uptrace/bun"
 )
 
 type Command string
@@ -148,6 +147,14 @@ func runWithConfig(ctx context.Context, cfg Config) (runErr error) {
 	return nil
 }
 
+type ProviderStackOrchestrator interface {
+	Build(ctx context.Context, cfg Config, toolSet []tools.Tool) (providers.Provider, func() error, error)
+}
+
+type defaultProviderStackOrchestrator struct{}
+
+var providerStackOrchestrator ProviderStackOrchestrator = defaultProviderStackOrchestrator{}
+
 func validateConfig(cfg Config) error {
 	if cfg.Timeout < 0 {
 		return fmt.Errorf("flag error: timeout cannot be negative")
@@ -207,6 +214,10 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 	if err != nil {
 		return nil, nil, fmt.Errorf("tool config error: %w", err)
 	}
+	return providerStackOrchestrator.Build(ctx, cfg, toolSet)
+}
+
+func (d defaultProviderStackOrchestrator) Build(ctx context.Context, cfg Config, toolSet []tools.Tool) (providers.Provider, func() error, error) {
 
 	db, closeDB, err := persistence.ConfigureDB(ctx, strings.TrimSpace(cfg.DBPath))
 	if err != nil {
@@ -219,7 +230,17 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 		}
 		return nil, nil, fmt.Errorf("persistence init error: %w", err)
 	}
-	middlewareFactories := buildSessionMiddleware(cfg, sessionStore, db)
+	traceStore, err := persistence.NewTraceMessageStore(ctx, db)
+	if err != nil {
+		if closeDB != nil {
+			_ = closeDB()
+		}
+		if sessionStore != nil {
+			_ = sessionStore.Close()
+		}
+		return nil, nil, fmt.Errorf("trace persistence init error: %w", err)
+	}
+	middlewareFactories := buildSessionMiddleware(cfg, sessionStore, traceStore)
 
 	routerCfg := session.Config{
 		Model:                cfg.Model,
@@ -258,7 +279,7 @@ func (s sessionStoreLookupAdapter) PreviousResponseID(ctx context.Context, provi
 	return state.PreviousResponseID, found, nil
 }
 
-func buildSessionMiddleware(cfg Config, store persistence.SessionStore, db *bun.DB) []session.MiddlewareFactory {
+func buildSessionMiddleware(cfg Config, store persistence.SessionStore, traceStore persistence.TraceMessageStore) []session.MiddlewareFactory {
 	middlewareFactories := make([]session.MiddlewareFactory, 0, 3)
 	if store != nil {
 		middlewareFactories = append(middlewareFactories, func(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string) (providers.Provider, error) {
@@ -266,9 +287,9 @@ func buildSessionMiddleware(cfg Config, store persistence.SessionStore, db *bun.
 		})
 	}
 
-	if db != nil {
+	if traceStore != nil {
 		middlewareFactories = append(middlewareFactories, func(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string) (providers.Provider, error) {
-			return middleware.NewPersistTrace(ctx, provider, providerType, sessionID, db)
+			return middleware.NewPersistTrace(ctx, provider, providerType, sessionID, traceStore)
 		})
 	}
 	if !cfg.BypassCompressionBarrier {

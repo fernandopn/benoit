@@ -40,8 +40,8 @@ func TestTabCompletesUniqueSlashCommand(t *testing.T) {
 
 	m = applyUpdate(t, m, tea.KeyMsg{Type: tea.KeyTab})
 
-	if got := m.input.Value(); got != "/compress" {
-		t.Fatalf("expected tab completion to produce /compress, got %q", got)
+	if got := m.input.Value(); got != "/compact" {
+		t.Fatalf("expected tab completion to produce /compact, got %q", got)
 	}
 	if m.commandSuggestionsShown {
 		t.Fatalf("expected suggestion table to stay hidden for unique completion")
@@ -77,8 +77,8 @@ func TestTabShowsSlashCommandTableWhenAmbiguous(t *testing.T) {
 	if suggestions == "" {
 		t.Fatalf("expected non-empty suggestion table rendering")
 	}
-	if !strings.Contains(ansi.Strip(suggestions), "/compress") {
-		t.Fatalf("expected suggestion table to include /compress")
+	if !strings.Contains(ansi.Strip(suggestions), "/compact") {
+		t.Fatalf("expected suggestion table to include /compact")
 	}
 	if !strings.Contains(ansi.Strip(m.renderInputArea()), "/") {
 		t.Fatalf("expected input area to keep the typed slash command")

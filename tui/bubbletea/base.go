@@ -27,7 +27,7 @@ type commandSuggestion struct {
 }
 
 var knownSlashCommands = []commandSuggestion{
-	{Command: tuicmd.CompressCommand, Description: "compact context"},
+	{Command: tuicmd.CompactCommand, Description: "compact context"},
 	{Command: tuicmd.ExitCommand, Description: "quit session"},
 	{Command: tuicmd.QuitCommand, Description: "quit session"},
 }
