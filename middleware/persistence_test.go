@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"sync"
 	"testing"
 
@@ -11,9 +13,10 @@ import (
 )
 
 type sessionStoreStub struct {
-	mu      sync.Mutex
-	byKey   map[string]persistence.SessionState
-	updates []persistence.SessionState
+	mu        sync.Mutex
+	byKey     map[string]persistence.SessionState
+	updates   []persistence.SessionState
+	updateErr error
 }
 
 func (s *sessionStoreStub) GetSession(_ context.Context, providerType providers.ProviderType, sessionID string) (persistence.SessionState, bool, error) {
@@ -42,6 +45,9 @@ func (s *sessionStoreStub) ListSessions(_ context.Context, providerType provider
 func (s *sessionStoreStub) UpdateSession(_ context.Context, state persistence.SessionState) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.updateErr != nil {
+		return s.updateErr
+	}
 	if s.byKey == nil {
 		s.byKey = map[string]persistence.SessionState{}
 	}
@@ -174,5 +180,44 @@ func TestSessionStoreMiddlewareUpdatesAfterCompression(t *testing.T) {
 	}
 	if state.PreviousResponseID != "seed-response" {
 		t.Fatalf("unexpected previous_response_id: %q", state.PreviousResponseID)
+	}
+}
+
+func TestSessionStoreMiddlewareSurfacesChatPersistenceErrors(t *testing.T) {
+	provider := &cursorProviderStub{chatMsgs: []providers.Msg{
+		{Type: providers.MsgTypeChatFinal, Value: "ok", Metadata: map[string]string{"response_id": "resp-1"}},
+	}}
+	store := &sessionStoreStub{updateErr: errors.New("db unavailable")}
+	wrapped := NewSessionStoreMiddleware(provider, store, providers.ProviderTypeOpenAI, "session-1")
+
+	seenStorageError := false
+	for msg := range wrapped.Chat(context.Background(), "hello") {
+		if msg.Type != providers.MsgTypeError {
+			continue
+		}
+		if msg.Metadata["component"] != "persistence" || msg.Metadata["phase"] != "update_session" {
+			t.Fatalf("unexpected error metadata: %#v", msg.Metadata)
+		}
+		if !strings.Contains(msg.Value, "db unavailable") {
+			t.Fatalf("unexpected error value: %q", msg.Value)
+		}
+		seenStorageError = true
+	}
+	if !seenStorageError {
+		t.Fatal("expected storage error message")
+	}
+}
+
+func TestSessionStoreMiddlewareReturnsCompressionSyncErrors(t *testing.T) {
+	provider := &cursorProviderStub{compressionID: "seed-response"}
+	store := &sessionStoreStub{updateErr: errors.New("write failed")}
+	wrapped := NewSessionStoreMiddleware(provider, store, providers.ProviderTypeOpenAI, "session-9")
+
+	_, err := wrapped.PerformCompression(context.Background(), "", nil)
+	if err == nil {
+		t.Fatal("expected compression sync error")
+	}
+	if !strings.Contains(err.Error(), "write failed") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }

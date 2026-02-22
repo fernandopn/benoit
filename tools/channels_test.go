@@ -96,6 +96,17 @@ func TestSendChannelMessageToolNoChannelsConfigured(t *testing.T) {
 	}
 }
 
+func TestSendChannelMessageToolRequiresContext(t *testing.T) {
+	tool := NewSendChannelMessageTool([]ChannelBinding{{Name: "telegram", Channel: &sendChannelStub{}}})
+	out, err := tool.Call(nil, map[string]any{"channel": "telegram", "user_id": 1, "message": "hi"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "error: context is required" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
 func TestSendChannelMessageToolSendSuccess(t *testing.T) {
 	stub := &sendChannelStub{}
 	tool := NewSendChannelMessageTool([]ChannelBinding{{Name: " TeLeGrAm ", Channel: stub}})

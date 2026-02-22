@@ -21,8 +21,8 @@ func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 	return runBubbleTeaUI(ctx, provider, timeout, sessionID)
 }
 
-var runSimpleUI = func(provider providers.Provider, timeout time.Duration, sessionID string) {
-	RunSimple(provider, timeout, sessionID)
+var runSimpleUI = func(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) {
+	RunSimple(ctx, provider, timeout, sessionID)
 }
 
 var runBubbleTeaUI = runBubbleTea
@@ -58,7 +58,7 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 
 func Run(ctx context.Context, provider providers.Provider, timeout time.Duration, useSimple bool, sessionID string) error {
 	if shouldUseSimpleUI(useSimple) {
-		runSimpleUI(provider, timeout, sessionID)
+		runSimpleUI(ctx, provider, timeout, sessionID)
 		return nil
 	}
 	return runBubbleTeaUI(ctx, provider, timeout, sessionID)

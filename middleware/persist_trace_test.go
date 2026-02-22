@@ -11,7 +11,8 @@ import (
 )
 
 type persistTraceStubProvider struct {
-	messages []providers.Msg
+	messages  []providers.Msg
+	nilStream bool
 }
 
 type persistTraceStoreStub struct {
@@ -19,6 +20,9 @@ type persistTraceStoreStub struct {
 }
 
 func (s *persistTraceStubProvider) Chat(_ context.Context, _ string) <-chan providers.Msg {
+	if s.nilStream {
+		return nil
+	}
 	out := make(chan providers.Msg, len(s.messages))
 	go func() {
 		defer close(out)
@@ -141,6 +145,26 @@ func TestPersistTracePropagatesStorageErrors(t *testing.T) {
 	}
 	if !seenError {
 		t.Fatal("expected storage error message")
+	}
+}
+
+func TestPersistTraceHandlesNilProviderStream(t *testing.T) {
+	trace := &PersistTrace{
+		provider:     &persistTraceStubProvider{nilStream: true},
+		providerType: providers.ProviderTypeOpenAI,
+		sessionID:    "session-1",
+		store:        &persistTraceStoreStub{},
+	}
+
+	msgs := make([]providers.Msg, 0)
+	for msg := range trace.Chat(context.Background(), "hi") {
+		msgs = append(msgs, msg)
+	}
+	if len(msgs) != 1 {
+		t.Fatalf("expected one error message, got %d", len(msgs))
+	}
+	if msgs[0].Type != providers.MsgTypeError || msgs[0].Value != "provider stream is not configured" {
+		t.Fatalf("unexpected message: %#v", msgs[0])
 	}
 }
 

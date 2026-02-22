@@ -70,7 +70,7 @@ func TestRun(t *testing.T) {
 	t.Run("forces simple mode when requested", func(t *testing.T) {
 		isTerminalAvailable = func() bool { return true }
 		simpleCalled := false
-		runSimpleUI = func(_ providers.Provider, _ time.Duration, sessionID string) {
+		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string) {
 			simpleCalled = true
 			if sessionID != "session-abc" {
 				t.Fatalf("unexpected session id: %q", sessionID)
@@ -93,7 +93,7 @@ func TestRun(t *testing.T) {
 	t.Run("uses bubbletea when terminal available and not forced", func(t *testing.T) {
 		isTerminalAvailable = func() bool { return true }
 		simpleCalled := false
-		runSimpleUI = func(_ providers.Provider, _ time.Duration, _ string) {
+		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string) {
 			simpleCalled = true
 		}
 
@@ -117,7 +117,7 @@ func TestRun(t *testing.T) {
 	t.Run("falls back to simple when no terminal", func(t *testing.T) {
 		isTerminalAvailable = func() bool { return false }
 		simpleCalled := false
-		runSimpleUI = func(_ providers.Provider, _ time.Duration, sessionID string) {
+		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string) {
 			simpleCalled = true
 			if sessionID != "session-ghi" {
 				t.Fatalf("unexpected session id: %q", sessionID)

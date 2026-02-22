@@ -101,23 +101,12 @@ func (s *BunSessionStore) UpdateSession(ctx context.Context, state SessionState)
 		UpdatedAtUnix:    updatedAt,
 	}
 
-	existing := &SessionStateModel{Provider: model.Provider, SessionID: model.SessionID}
-	err := s.db.NewSelect().Model(existing).WherePK().Scan(ctx)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
-	}
-	if err == nil {
-		if model.PreviousResponse == "" {
-			model.PreviousResponse = existing.PreviousResponse
-		}
-		if model.RemainingTokens == nil {
-			model.RemainingTokens = existing.RemainingTokens
-		}
-		_, err = s.db.NewUpdate().Model(model).WherePK().Column("previous_response_id", "remaining_tokens", "updated_at").Exec(ctx)
-		return err
-	}
-
-	_, err = s.db.NewInsert().Model(model).Exec(ctx)
+	_, err := s.db.NewInsert().Model(model).
+		On("CONFLICT (provider, session_id) DO UPDATE").
+		Set("previous_response_id = CASE WHEN EXCLUDED.previous_response_id = '' THEN previous_response_id ELSE EXCLUDED.previous_response_id END").
+		Set("remaining_tokens = COALESCE(EXCLUDED.remaining_tokens, remaining_tokens)").
+		Set("updated_at = EXCLUDED.updated_at").
+		Exec(ctx)
 	return err
 }
 

@@ -39,6 +39,9 @@ type providerFactory struct {
 }
 
 func NewRouterProvider(ctx context.Context, cfg Config, toolSet []tools.Tool) (providers.Provider, func() error, error) {
+	if ctx == nil {
+		return nil, nil, fmt.Errorf("context is required")
+	}
 	factory := newProviderFactory(ctx, cfg, toolSet, cfg.SessionLookup)
 	router, err := newRouterProvider(factory)
 	if err != nil {
@@ -48,9 +51,6 @@ func NewRouterProvider(ctx context.Context, cfg Config, toolSet []tools.Tool) (p
 }
 
 func newProviderFactory(ctx context.Context, cfg Config, toolSet []tools.Tool, sessionLookup PreviousResponseLookup) *providerFactory {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	providerFn := cfg.ProviderBuilder
 	if providerFn == nil {
 		providerFn = DefaultProviderBuilder
@@ -168,6 +168,9 @@ func newRouterProvider(factory *providerFactory) (providers.Provider, error) {
 }
 
 func (r *routerProvider) Chat(ctx context.Context, input string) <-chan providers.Msg {
+	if ctx == nil {
+		return providerErrorStream(errors.New("context is required"))
+	}
 	sessionID := r.resolveSessionID(ctx, "")
 	provider, err := r.factory.providerForSession(sessionID)
 	if err != nil {
@@ -177,6 +180,9 @@ func (r *routerProvider) Chat(ctx context.Context, input string) <-chan provider
 }
 
 func (r *routerProvider) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
+	if ctx == nil {
+		return "", errors.New("context is required")
+	}
 	sessionID = r.resolveSessionID(ctx, sessionID)
 	provider, err := r.factory.providerForSession(sessionID)
 	if err != nil {
@@ -186,6 +192,9 @@ func (r *routerProvider) PerformCompression(ctx context.Context, sessionID strin
 }
 
 func (r *routerProvider) ListModels(ctx context.Context) ([]string, error) {
+	if ctx == nil {
+		return nil, errors.New("context is required")
+	}
 	provider, err := r.factory.providerForSession(r.defaultSessionID)
 	if err != nil {
 		return nil, err
@@ -198,7 +207,11 @@ func (r *routerProvider) Name() string {
 }
 
 func (r *routerProvider) NotifyCompressionStatusSent(sessionID string) {
-	sessionID = r.resolveSessionID(context.Background(), sessionID)
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		sessionID = r.defaultSessionID
+	}
+	sessionID = NormalizeSessionID(sessionID)
 	provider, err := r.factory.providerForSession(sessionID)
 	if err != nil {
 		return

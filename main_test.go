@@ -198,6 +198,9 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		if cfg.DBPath != defaultDBPath {
 			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
+		if len(cfg.TelegramAllowedUserIDs) != 0 {
+			t.Fatalf("expected empty default telegram allowlist, got %v", cfg.TelegramAllowedUserIDs)
+		}
 	})
 
 	t.Run("list_sessions", func(t *testing.T) {

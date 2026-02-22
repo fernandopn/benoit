@@ -395,7 +395,10 @@ func TestIsTelegramUserAllowed(t *testing.T) {
 	if isTelegramUserAllowed(999, allowed) {
 		t.Fatal("expected user 999 to be rejected")
 	}
-	if !isTelegramUserAllowed(0, nil) {
-		t.Fatal("expected allowlist to allow all users")
+	if isTelegramUserAllowed(0, nil) {
+		t.Fatal("expected empty allowlist to deny all users")
+	}
+	if isTelegramUserAllowed(77, nil) {
+		t.Fatal("expected empty allowlist to deny explicit users")
 	}
 }

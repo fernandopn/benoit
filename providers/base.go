@@ -128,7 +128,7 @@ func SetContextUsage(ctx context.Context, msg Msg) bool {
 // WithSessionID attaches a logical session identifier to context.
 func WithSessionID(ctx context.Context, sessionID string) context.Context {
 	if ctx == nil {
-		ctx = context.Background()
+		return nil
 	}
 	sessionID = strings.TrimSpace(sessionID)
 	if sessionID == "" {

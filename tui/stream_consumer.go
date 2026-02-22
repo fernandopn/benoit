@@ -97,6 +97,9 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 	if start == nil {
 		return "", errors.New("provider stream is not configured")
 	}
+	if ctx == nil {
+		return "", errors.New("context is required")
+	}
 
 	requestCtx := ctx
 	cancel := func() {}
@@ -106,6 +109,9 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 	defer cancel()
 
 	msgs := start(requestCtx, prompt)
+	if msgs == nil {
+		return "", errors.New("provider returned nil stream")
+	}
 	var (
 		chatDelta         strings.Builder
 		chatFinal         strings.Builder

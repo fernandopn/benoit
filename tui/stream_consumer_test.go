@@ -305,3 +305,27 @@ func TestStreamStartForProviderUsesSessionChatForPrompts(t *testing.T) {
 		t.Fatalf("unexpected chat result: %#v", msgs)
 	}
 }
+
+func TestStreamPromptFailsOnNilStream(t *testing.T) {
+	_, err := streamPrompt(context.Background(), "hello", 0, func(context.Context, string) <-chan providers.Msg {
+		return nil
+	}, streamCallbacks{})
+	if err == nil {
+		t.Fatal("expected nil stream error")
+	}
+	if !strings.Contains(err.Error(), "nil stream") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestStreamPromptRequiresContext(t *testing.T) {
+	_, err := streamPrompt(nil, "hello", 0, func(context.Context, string) <-chan providers.Msg {
+		return testMsgStream(providers.Msg{Type: providers.MsgTypeChatFinal, Value: "ok"})
+	}, streamCallbacks{})
+	if err == nil {
+		t.Fatal("expected context validation error")
+	}
+	if !strings.Contains(err.Error(), "context is required") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}

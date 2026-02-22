@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -32,10 +33,16 @@ func NewSessionStoreMiddleware(provider providers.Provider, store persistence.Se
 }
 
 func (m *SessionStoreMiddleware) Chat(ctx context.Context, input string) <-chan providers.Msg {
+	if ctx == nil {
+		return singleErrorMsgStream("context is required")
+	}
 	return m.wrapStream(ctx, m.provider.Chat(ctx, input))
 }
 
 func (m *SessionStoreMiddleware) PerformCompression(ctx context.Context, sessionID string, compressor providers.Compressor) (string, error) {
+	if ctx == nil {
+		return "", errors.New("context is required")
+	}
 	if strings.TrimSpace(sessionID) == "" {
 		sessionID = m.sessionID
 	}
@@ -43,7 +50,9 @@ func (m *SessionStoreMiddleware) PerformCompression(ctx context.Context, session
 	if err != nil {
 		return "", err
 	}
-	m.syncSessionFromProvider(ctx)
+	if err := m.syncSessionFromProvider(ctx); err != nil {
+		return "", err
+	}
 	return summary, nil
 }
 
@@ -52,7 +61,6 @@ func (m *SessionStoreMiddleware) NotifyCompressionStatusSent(sessionID string) {
 		sessionID = m.sessionID
 	}
 	providers.NotifyCompressionStatusSent(m.provider, sessionID)
-	m.syncSessionFromProvider(context.Background())
 }
 
 func (m *SessionStoreMiddleware) ListModels(ctx context.Context) ([]string, error) {
@@ -65,22 +73,27 @@ func (m *SessionStoreMiddleware) Name() string {
 
 func (m *SessionStoreMiddleware) wrapStream(ctx context.Context, in <-chan providers.Msg) <-chan providers.Msg {
 	if in == nil {
-		return nil
+		return singleErrorMsgStream("provider stream is not configured")
 	}
 	out := make(chan providers.Msg)
 	go func() {
 		defer close(out)
 		for msg := range in {
 			out <- msg
-			m.captureMessage(ctx, msg)
+			if err := m.captureMessage(ctx, msg); err != nil {
+				out <- storageErrorMsg("update_session", err)
+			}
 		}
 	}()
 	return out
 }
 
-func (m *SessionStoreMiddleware) captureMessage(ctx context.Context, msg providers.Msg) {
+func (m *SessionStoreMiddleware) captureMessage(ctx context.Context, msg providers.Msg) error {
 	if m.store == nil {
-		return
+		return nil
+	}
+	if ctx == nil {
+		return errors.New("context is required")
 	}
 	responseID := strings.TrimSpace(msg.Metadata["response_id"])
 	remaining := remainingTokensFromMsg(msg)
@@ -93,12 +106,12 @@ func (m *SessionStoreMiddleware) captureMessage(ctx context.Context, msg provide
 	case providers.MsgTypeCompressionStatus:
 		shouldUpdate = responseID != "" || remaining != nil
 	default:
-		return
+		return nil
 	}
 	if !shouldUpdate {
-		return
+		return nil
 	}
-	_ = m.store.UpdateSession(ctx, persistence.SessionState{
+	return m.store.UpdateSession(ctx, persistence.SessionState{
 		Provider:           m.providerType,
 		SessionID:          m.sessionID,
 		PreviousResponseID: responseID,
@@ -106,23 +119,33 @@ func (m *SessionStoreMiddleware) captureMessage(ctx context.Context, msg provide
 	})
 }
 
-func (m *SessionStoreMiddleware) syncSessionFromProvider(ctx context.Context) {
+func (m *SessionStoreMiddleware) syncSessionFromProvider(ctx context.Context) error {
 	if m.store == nil {
-		return
+		return nil
+	}
+	if ctx == nil {
+		return errors.New("context is required")
 	}
 	cursorProvider, ok := m.provider.(providers.SessionCursorProvider)
 	if !ok {
-		return
+		return nil
 	}
 	previousID := strings.TrimSpace(cursorProvider.PreviousResponseID())
 	if previousID == "" {
-		return
+		return nil
 	}
-	_ = m.store.UpdateSession(ctx, persistence.SessionState{
+	return m.store.UpdateSession(ctx, persistence.SessionState{
 		Provider:           m.providerType,
 		SessionID:          m.sessionID,
 		PreviousResponseID: previousID,
 	})
+}
+
+func singleErrorMsgStream(errText string) <-chan providers.Msg {
+	out := make(chan providers.Msg, 1)
+	out <- providers.Msg{Type: providers.MsgTypeError, Value: strings.TrimSpace(errText)}
+	close(out)
+	return out
 }
 
 func remainingTokensFromMsg(msg providers.Msg) *int64 {

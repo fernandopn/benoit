@@ -76,7 +76,7 @@ func (s *SendChannelMessageTool) Definition() responses.ToolUnionParam {
 
 func (s *SendChannelMessageTool) Call(ctx context.Context, args map[string]any) (string, error) {
 	if ctx == nil {
-		ctx = context.Background()
+		return toolError(fmt.Errorf("context is required")), nil
 	}
 	if s == nil || len(s.channels) == 0 {
 		return "error: no channels configured", nil

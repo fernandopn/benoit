@@ -63,7 +63,7 @@ official Go SDK.
   - default: `30`
 - `-telegram-allowed-users`
   - comma-separated Telegram user IDs accepted in Telegram mode
-  - default: `8230557735`
+  - default: empty (deny all users)
 
 ### `list_sessions`
 

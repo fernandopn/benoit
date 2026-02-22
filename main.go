@@ -74,7 +74,7 @@ const (
 	defaultChannelMode                = string(ChannelTelegram)
 	defaultDBPath                     = "db.sqlite"
 	defaultTelegramPollTimeoutSeconds = 30
-	defaultTelegramAllowedUsers       = "8230557735"
+	defaultTelegramAllowedUsers       = ""
 
 	openAIAPIKeyEnv   = "OPENAI_API_KEY"
 	telegramAPIKeyEnv = "TELEGRAM_API_KEY"

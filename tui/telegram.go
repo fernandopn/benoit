@@ -20,6 +20,7 @@ import (
 const telegramMaxMessageLength = 4096
 const telegramTypingInterval = 4 * time.Second
 const telegramTypingRequestTimeout = 4 * time.Second
+const telegramIncomingBufferSize = 64
 
 func RunTelegram(ctx context.Context, telegramChannel channels.Channel, provider providers.Provider, timeout time.Duration, pollTimeoutSeconds int, allowedUserIDs []int64) error {
 	if telegramChannel == nil {
@@ -38,7 +39,7 @@ func RunTelegram(ctx context.Context, telegramChannel channels.Channel, provider
 	writeTelegramHeader(writer, colors, provider.Name(), width)
 	writer.Flush()
 	allowedUsers := buildAllowedTelegramUsers(allowedUserIDs)
-	incomingMessages := make(chan channels.ChannelMessage)
+	incomingMessages := make(chan channels.ChannelMessage, telegramIncomingBufferSize)
 	if err := telegramChannel.RegisterReceiveMessageChan(incomingMessages); err != nil {
 		return err
 	}
@@ -137,7 +138,7 @@ func buildAllowedTelegramUsers(ids []int64) map[int64]struct{} {
 
 func isTelegramUserAllowed(userID int64, allowed map[int64]struct{}) bool {
 	if len(allowed) == 0 {
-		return true
+		return false
 	}
 	if userID == 0 {
 		return false

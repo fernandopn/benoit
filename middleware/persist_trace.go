@@ -53,6 +53,11 @@ func (s *PersistTrace) chat(ctx context.Context, input string, start func() <-ch
 		out <- storageErrorMsg("store_input", err)
 	}
 	in := start()
+	if in == nil {
+		out <- providers.Msg{Type: providers.MsgTypeError, Value: "provider stream is not configured"}
+		close(out)
+		return out
+	}
 
 	go func() {
 		defer close(out)

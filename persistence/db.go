@@ -29,7 +29,7 @@ func OpenDB(ctx context.Context, dbPath string) (*bun.DB, error) {
 		return nil, errors.New("db path is required")
 	}
 	if ctx == nil {
-		ctx = context.Background()
+		return nil, errors.New("context is required")
 	}
 
 	sqlDB, err := sql.Open(sqliteshim.ShimName, dbPath)
