@@ -200,3 +200,35 @@ func TestBasicCompressionPromptIncludesWordLimit(t *testing.T) {
 		t.Fatalf("expected prompt to include compression instructions, got %q", prompt)
 	}
 }
+
+func TestBasicCompressionSetsContextUsageTarget(t *testing.T) {
+	provider := &providerStub{chatFunc: func(context.Context, string) <-chan providers.Msg {
+		return msgStream(
+			providers.Msg{
+				Type: providers.MsgTypeContextUsage,
+				Metadata: map[string]string{
+					"tokens_input_used": "24000",
+					"tokens_available":  "400000",
+				},
+			},
+			providers.Msg{Type: providers.MsgTypeChatFinal, Value: "summary"},
+		)
+	}}
+
+	usage := providers.Msg{}
+	ctx := providers.WithContextUsageTarget(context.Background(), &usage)
+
+	got, err := BasicCompression(ctx, provider, "", 10)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != "summary" {
+		t.Fatalf("unexpected compressed output: %q", got)
+	}
+	if usage.Type != providers.MsgTypeContextUsage {
+		t.Fatalf("expected context usage message, got %#v", usage)
+	}
+	if usage.Metadata["tokens_input_used"] != "24000" {
+		t.Fatalf("unexpected tokens_input_used: %q", usage.Metadata["tokens_input_used"])
+	}
+}

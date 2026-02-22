@@ -57,8 +57,9 @@ func (b Basic) Compress(ctx context.Context, provider providers.Provider, sessio
 	}
 
 	var (
-		chatDelta strings.Builder
-		chatFinal strings.Builder
+		chatDelta    strings.Builder
+		chatFinal    strings.Builder
+		contextUsage providers.Msg
 	)
 	for msg := range stream {
 		switch msg.Type {
@@ -66,6 +67,8 @@ func (b Basic) Compress(ctx context.Context, provider providers.Provider, sessio
 			chatDelta.WriteString(msg.Value)
 		case providers.MsgTypeChatFinal:
 			chatFinal.WriteString(msg.Value)
+		case providers.MsgTypeContextUsage:
+			contextUsage = msg
 		case providers.MsgTypeError:
 			errText := strings.TrimSpace(msg.Value)
 			if errText == "" {
@@ -88,6 +91,9 @@ func (b Basic) Compress(ctx context.Context, provider providers.Provider, sessio
 	}
 
 	normalized := strings.Join(strings.Fields(compressed), " ")
+	if contextUsage.Type == providers.MsgTypeContextUsage {
+		providers.SetContextUsage(ctx, contextUsage)
+	}
 	return normalized, nil
 }
 

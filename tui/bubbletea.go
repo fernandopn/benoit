@@ -8,6 +8,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 	bubbleteaui "github.com/fernandopn/benoit/tui/bubbletea"
 	"golang.org/x/term"
 )
@@ -30,7 +31,7 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 	if provider == nil {
 		return errors.New("provider is required")
 	}
-	sessionID = resolveTUISessionID(sessionID)
+	sessionID = session.ResolveTUISessionID(sessionID)
 	start := streamStartForProvider(provider, sessionID)
 
 	cfg := bubbleteaui.Config{

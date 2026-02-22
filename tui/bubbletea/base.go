@@ -18,7 +18,7 @@ const (
 
 const (
 	DefaultWelcomeText = "Welcome. Type a prompt and press Enter."
-	DefaultHelpText    = "Enter to send | Tab to complete /commands | /compress to compact | /exit to quit | PgUp/PgDn or mouse wheel to scroll"
+	DefaultHelpText    = "Enter to send | See commands / + <tab>"
 )
 
 type commandSuggestion struct {

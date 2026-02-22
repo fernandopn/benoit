@@ -54,6 +54,22 @@ func TestResolveInteractiveSessionID(t *testing.T) {
 	}
 }
 
+func TestResolveTUISessionID(t *testing.T) {
+	if got := ResolveTUISessionID(" session-123 "); got != "session-123" {
+		t.Fatalf("ResolveTUISessionID(trimmed) = %q", got)
+	}
+
+	generated := ResolveTUISessionID(" ")
+	if strings.TrimSpace(generated) == "" {
+		t.Fatal("expected generated session ID")
+	}
+
+	fallback := ResolveTUISessionID("bad\nline")
+	if strings.TrimSpace(fallback) == "" || strings.Contains(fallback, "\n") {
+		t.Fatalf("expected fallback session ID, got %q", fallback)
+	}
+}
+
 func TestTelegramSessionID(t *testing.T) {
 	if got := TelegramSessionID(77); got != "telegram:77" {
 		t.Fatalf("TelegramSessionID(77) = %q", got)

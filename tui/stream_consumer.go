@@ -57,13 +57,16 @@ func startCommandStream(ctx context.Context, provider providers.Provider, sessio
 	go func() {
 		defer close(out)
 		compressor := compression.NewBasic(maxWords)
-		summary, status, err := providers.PerformCompressionWithStatus(ctx, provider, sessionID, compressor, compressionFinishedMessage)
+		summary, status, contextUsage, err := providers.PerformCompressionWithStatus(ctx, provider, sessionID, compressor, compressionFinishedMessage)
 		if err != nil {
 			out <- providers.Msg{Type: providers.MsgTypeError, Value: err.Error()}
 			return
 		}
 		out <- status
 		providers.NotifyCompressionStatusSent(provider, sessionID)
+		if contextUsage.Type == providers.MsgTypeContextUsage {
+			out <- contextUsage
+		}
 		out <- providers.Msg{Type: providers.MsgTypeChatDelta, Value: summary}
 		out <- providers.Msg{Type: providers.MsgTypeChatFinal, Value: summary}
 	}()

@@ -3,7 +3,6 @@ package tui
 import (
 	"bufio"
 	"bytes"
-	"strings"
 	"testing"
 )
 
@@ -41,21 +40,5 @@ func TestDecodeRuneFromFirstByte(t *testing.T) {
 	}
 	if len(raw) != 2 || raw[0] != 0xc3 || raw[1] != 0xa9 {
 		t.Fatalf("unexpected raw bytes: %v", raw)
-	}
-}
-
-func TestResolveTUISessionID(t *testing.T) {
-	if got := resolveTUISessionID(" session-123 "); got != "session-123" {
-		t.Fatalf("resolveTUISessionID(trimmed) = %q", got)
-	}
-
-	generated := resolveTUISessionID(" ")
-	if strings.TrimSpace(generated) == "" {
-		t.Fatal("expected generated session ID")
-	}
-
-	fallback := resolveTUISessionID("bad\nline")
-	if strings.TrimSpace(fallback) == "" || strings.Contains(fallback, "\n") {
-		t.Fatalf("expected fallback session ID, got %q", fallback)
 	}
 }

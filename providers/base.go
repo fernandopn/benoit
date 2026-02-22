@@ -76,6 +76,7 @@ type CompressionStatusSentNotifier interface {
 }
 
 type compressionStatusTargetKey struct{}
+type contextUsageTargetKey struct{}
 type sessionIDContextKey struct{}
 
 // WithCompressionStatusTarget attaches a destination message pointer where
@@ -94,6 +95,29 @@ func SetCompressionStatus(ctx context.Context, msg Msg) bool {
 		return false
 	}
 	target, ok := ctx.Value(compressionStatusTargetKey{}).(*Msg)
+	if !ok || target == nil {
+		return false
+	}
+	*target = msg
+	return true
+}
+
+// WithContextUsageTarget attaches a destination message pointer where
+// compressors/providers can write a context usage message when available.
+func WithContextUsageTarget(ctx context.Context, target *Msg) context.Context {
+	if ctx == nil || target == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, contextUsageTargetKey{}, target)
+}
+
+// SetContextUsage writes a context usage message into the target configured
+// on the context, returning true when written.
+func SetContextUsage(ctx context.Context, msg Msg) bool {
+	if ctx == nil || msg.Type != MsgTypeContextUsage {
+		return false
+	}
+	target, ok := ctx.Value(contextUsageTargetKey{}).(*Msg)
 	if !ok || target == nil {
 		return false
 	}
@@ -134,15 +158,15 @@ type Provider interface {
 	Name() string
 }
 
-func PerformCompressionWithStatus(ctx context.Context, provider Provider, sessionID string, compressor Compressor, fallbackStatus string) (string, Msg, error) {
+func PerformCompressionWithStatus(ctx context.Context, provider Provider, sessionID string, compressor Compressor, fallbackStatus string) (string, Msg, Msg, error) {
 	if ctx == nil {
-		return "", Msg{}, errors.New("context is required")
+		return "", Msg{}, Msg{}, errors.New("context is required")
 	}
 	if provider == nil {
-		return "", Msg{}, errors.New("provider is required")
+		return "", Msg{}, Msg{}, errors.New("provider is required")
 	}
 	if compressor == nil {
-		return "", Msg{}, errors.New("compressor is required")
+		return "", Msg{}, Msg{}, errors.New("compressor is required")
 	}
 
 	fallbackStatus = strings.TrimSpace(fallbackStatus)
@@ -151,14 +175,17 @@ func PerformCompressionWithStatus(ctx context.Context, provider Provider, sessio
 	}
 
 	status := Msg{}
-	summary, err := provider.PerformCompression(WithCompressionStatusTarget(ctx, &status), sessionID, compressor)
+	contextUsage := Msg{}
+	compressionCtx := WithCompressionStatusTarget(ctx, &status)
+	compressionCtx = WithContextUsageTarget(compressionCtx, &contextUsage)
+	summary, err := provider.PerformCompression(compressionCtx, sessionID, compressor)
 	if err != nil {
-		return "", Msg{}, err
+		return "", Msg{}, Msg{}, err
 	}
 
 	summary = strings.TrimSpace(summary)
 	if summary == "" {
-		return "", Msg{}, errors.New("compression returned empty summary")
+		return "", Msg{}, Msg{}, errors.New("compression returned empty summary")
 	}
 
 	if status.Type != MsgTypeCompressionStatus {
@@ -167,7 +194,47 @@ func PerformCompressionWithStatus(ctx context.Context, provider Provider, sessio
 	if strings.TrimSpace(status.Value) == "" {
 		status.Value = fallbackStatus
 	}
-	return summary, status, nil
+
+	if inferredContextUsage, ok := contextUsageFromCompressionStatus(status); ok {
+		contextUsage = inferredContextUsage
+	} else if contextUsage.Type != MsgTypeContextUsage {
+		contextUsage = Msg{}
+	}
+
+	return summary, status, contextUsage, nil
+}
+
+func contextUsageFromCompressionStatus(status Msg) (Msg, bool) {
+	if status.Metadata == nil {
+		return Msg{}, false
+	}
+	used := strings.TrimSpace(status.Metadata["to_tokens_used"])
+	if used == "" {
+		used = strings.TrimSpace(status.Metadata["tokens_input_used"])
+	}
+	if used == "" {
+		used = strings.TrimSpace(status.Metadata["tokens_used"])
+	}
+	available := strings.TrimSpace(status.Metadata["to_tokens_available"])
+	if available == "" {
+		available = strings.TrimSpace(status.Metadata["tokens_available"])
+	}
+	if used == "" || available == "" {
+		return Msg{}, false
+	}
+
+	metadata := map[string]string{
+		"tokens_used":       used,
+		"tokens_input_used": used,
+		"tokens_available":  available,
+	}
+	if output := strings.TrimSpace(status.Metadata["to_tokens_output_used"]); output != "" {
+		metadata["tokens_output_used"] = output
+	}
+	if total := strings.TrimSpace(status.Metadata["to_tokens_total_used"]); total != "" {
+		metadata["tokens_total_used"] = total
+	}
+	return Msg{Type: MsgTypeContextUsage, Metadata: metadata}, true
 }
 
 func NotifyCompressionStatusSent(provider Provider, sessionID string) {

@@ -52,6 +52,19 @@ func ResolveInteractiveSessionID(raw string) (string, error) {
 	return raw, nil
 }
 
+func ResolveTUISessionID(raw string) string {
+	resolved, err := ResolveInteractiveSessionID(raw)
+	if err == nil {
+		return resolved
+	}
+
+	fallback, fallbackErr := ResolveInteractiveSessionID("")
+	if fallbackErr != nil {
+		return uuid.NewString()
+	}
+	return fallback
+}
+
 func TelegramSessionID(userID int64) string {
 	if userID == 0 {
 		return ""

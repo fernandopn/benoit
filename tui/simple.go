@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 	tuicmd "github.com/fernandopn/benoit/tui/commands"
 	simpleui "github.com/fernandopn/benoit/tui/simple"
 	tuiutils "github.com/fernandopn/benoit/tui/utils"
@@ -28,7 +29,7 @@ func RunSimple(provider providers.Provider, timeout time.Duration, sessionID str
 	writer := bufio.NewWriter(os.Stdout)
 	colors := newSimpleTheme(term.IsTerminal(int(os.Stdout.Fd())))
 	width := simpleTerminalWidth()
-	sessionID = resolveTUISessionID(sessionID)
+	sessionID = session.ResolveTUISessionID(sessionID)
 	start := streamStartForProvider(provider, sessionID)
 
 	writeSimpleHeader(writer, colors, provider.Name(), width)
@@ -145,7 +146,7 @@ func simpleTerminalWidth() int {
 
 func writeSimpleHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
 	title := "Benoit · " + providerName
-	hint := "Enter to send | Shift+Enter newline | /compress to compact | /exit to quit"
+	hint := "Enter to send | See commands / + <tab>"
 	simpleui.WriteHeader(writer, colors, title, hint, width)
 }
 
