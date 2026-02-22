@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 	"github.com/uptrace/bun"
 )
 
@@ -51,7 +52,7 @@ func (s *BunSessionStore) GetSession(ctx context.Context, providerType providers
 	}
 	model := &SessionStateModel{
 		Provider:  int(providerType),
-		SessionID: NormalizeSessionID(sessionID),
+		SessionID: session.NormalizeSessionID(sessionID),
 	}
 	err := s.db.NewSelect().Model(model).WherePK().Scan(ctx)
 	if err != nil {
@@ -87,7 +88,7 @@ func (s *BunSessionStore) UpdateSession(ctx context.Context, state SessionState)
 	if s == nil || s.db == nil {
 		return nil
 	}
-	normalizedSessionID := NormalizeSessionID(state.SessionID)
+	normalizedSessionID := session.NormalizeSessionID(state.SessionID)
 	updatedAt := state.UpdatedAtUnix
 	if updatedAt <= 0 {
 		updatedAt = time.Now().Unix()
@@ -124,7 +125,7 @@ func (s *BunSessionStore) DeleteSession(ctx context.Context, providerType provid
 	if s == nil || s.db == nil {
 		return nil
 	}
-	model := &SessionStateModel{Provider: int(providerType), SessionID: NormalizeSessionID(sessionID)}
+	model := &SessionStateModel{Provider: int(providerType), SessionID: session.NormalizeSessionID(sessionID)}
 	_, err := s.db.NewDelete().Model(model).WherePK().Exec(ctx)
 	return err
 }

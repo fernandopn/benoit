@@ -8,6 +8,7 @@ import (
 
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 	"github.com/uptrace/bun"
 )
 
@@ -31,7 +32,7 @@ func NewPersistTrace(ctx context.Context, provider providers.Provider, providerT
 	return &PersistTrace{
 		provider:     provider,
 		providerType: providerType,
-		sessionID:    persistence.NormalizeSessionID(sessionID),
+		sessionID:    session.NormalizeSessionID(sessionID),
 		db:           db,
 	}, nil
 }

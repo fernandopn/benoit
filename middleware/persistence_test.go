@@ -7,6 +7,7 @@ import (
 
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 )
 
 type sessionStoreStub struct {
@@ -44,7 +45,7 @@ func (s *sessionStoreStub) UpdateSession(_ context.Context, state persistence.Se
 	if s.byKey == nil {
 		s.byKey = map[string]persistence.SessionState{}
 	}
-	state.SessionID = persistence.NormalizeSessionID(state.SessionID)
+	state.SessionID = session.NormalizeSessionID(state.SessionID)
 	key := s.key(state.Provider, state.SessionID)
 	if existing, ok := s.byKey[key]; ok {
 		if state.PreviousResponseID == "" {
@@ -71,7 +72,7 @@ func (s *sessionStoreStub) Close() error {
 }
 
 func (s *sessionStoreStub) key(providerType providers.ProviderType, sessionID string) string {
-	return providerType.String() + ":" + persistence.NormalizeSessionID(sessionID)
+	return providerType.String() + ":" + session.NormalizeSessionID(sessionID)
 }
 
 type cursorProviderStub struct {

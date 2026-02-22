@@ -27,6 +27,7 @@ Minimal terminal chat client for the OpenAI Responses API using the official Go 
 - Do not add `NewXFromEnv` constructors outside the `main` package.
 - When changing tool registration, update `README.md` and related tests in the same change to prevent drift.
 - Keep `main.go` as a thin entrypoint: parse config/credentials, then delegate orchestration to internal packages.
+- Prefer weak decoupling via explicit seams (interfaces and injected builders/factories) over direct concrete construction across packages.
 - Prefer a `run() error` pattern with a single `os.Exit` call in `main` to keep cleanup paths reliable.
 - Do not hardcode policy/account IDs in runtime logic; expose them through flags or explicit config.
 - Keep `.gitignore` updated for generated/runtime artifacts introduced by features.

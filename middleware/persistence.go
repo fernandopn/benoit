@@ -7,6 +7,7 @@ import (
 
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
+	"github.com/fernandopn/benoit/session"
 )
 
 type SessionStoreMiddleware struct {
@@ -26,7 +27,7 @@ func NewSessionStoreMiddleware(provider providers.Provider, store persistence.Se
 		provider:     provider,
 		store:        store,
 		providerType: providerType,
-		sessionID:    persistence.NormalizeSessionID(sessionID),
+		sessionID:    session.NormalizeSessionID(sessionID),
 	}
 }
 

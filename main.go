@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/fernandopn/benoit/channels"
+	"github.com/fernandopn/benoit/middleware"
 	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
 	"github.com/fernandopn/benoit/session"
@@ -20,6 +21,7 @@ import (
 	filetools "github.com/fernandopn/benoit/tools/files"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
+	"github.com/uptrace/bun"
 )
 
 type Command string
@@ -217,23 +219,72 @@ func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() 
 		}
 		return nil, nil, fmt.Errorf("persistence init error: %w", err)
 	}
+	middlewareFactories := buildSessionMiddleware(cfg, sessionStore, db)
 
 	routerCfg := session.Config{
-		Model:                    cfg.Model,
-		OpenAIAPIKey:             cfg.Credentials.OpenAIAPIKey,
-		OpenAIProviderParams:     cfg.OpenAIProviderParams,
-		DB:                       db,
-		BypassCompressionBarrier: cfg.BypassCompressionBarrier,
+		Model:                cfg.Model,
+		OpenAIAPIKey:         cfg.Credentials.OpenAIAPIKey,
+		OpenAIProviderParams: cfg.OpenAIProviderParams,
+		SessionLookup:        sessionStoreLookupAdapter{store: sessionStore},
+		MiddlewareFactories:  middlewareFactories,
+		ProviderBuilder:      buildOpenAIProvider,
 	}
-	router, closeFactory, err := session.NewRouterProvider(ctx, routerCfg, toolSet, sessionStore)
+	router, closeFactory, err := session.NewRouterProvider(ctx, routerCfg, toolSet)
 	if err != nil {
 		if closeDB != nil {
 			_ = closeDB()
+		}
+		if sessionStore != nil {
+			_ = sessionStore.Close()
 		}
 		return nil, nil, fmt.Errorf("provider init error: %w", err)
 	}
 
 	return router, combineCloseFuncs(closeFactory, closeDB), nil
+}
+
+type sessionStoreLookupAdapter struct {
+	store persistence.SessionStore
+}
+
+func (s sessionStoreLookupAdapter) PreviousResponseID(ctx context.Context, providerType providers.ProviderType, sessionID string) (string, bool, error) {
+	if s.store == nil {
+		return "", false, nil
+	}
+	state, found, err := s.store.GetSession(ctx, providerType, sessionID)
+	if err != nil {
+		return "", false, err
+	}
+	return state.PreviousResponseID, found, nil
+}
+
+func buildSessionMiddleware(cfg Config, store persistence.SessionStore, db *bun.DB) []session.MiddlewareFactory {
+	middlewareFactories := make([]session.MiddlewareFactory, 0, 3)
+	if store != nil {
+		middlewareFactories = append(middlewareFactories, func(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string) (providers.Provider, error) {
+			return middleware.NewSessionStoreMiddleware(provider, store, providerType, sessionID), nil
+		})
+	}
+
+	if db != nil {
+		middlewareFactories = append(middlewareFactories, func(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string) (providers.Provider, error) {
+			return middleware.NewPersistTrace(ctx, provider, providerType, sessionID, db)
+		})
+	}
+	if !cfg.BypassCompressionBarrier {
+		middlewareFactories = append(middlewareFactories, func(ctx context.Context, provider providers.Provider, _ providers.ProviderType, _ string) (providers.Provider, error) {
+			return middleware.NewCompressionBarrier(provider)
+		})
+	}
+	return middlewareFactories
+}
+
+func buildOpenAIProvider(_ context.Context, model string, apiKey string, params providers.OpenAIProviderParams, toolSet []tools.Tool) (providers.Provider, func() error, error) {
+	provider, err := providers.NewOpenAI(model, apiKey, params, toolSet)
+	if err != nil {
+		return nil, nil, err
+	}
+	return provider, nil, nil
 }
 
 func runCommand(ctx context.Context, cfg Config, provider providers.Provider) error {

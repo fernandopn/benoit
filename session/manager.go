@@ -7,19 +7,17 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/fernandopn/benoit/middleware"
-	"github.com/fernandopn/benoit/persistence"
 	"github.com/fernandopn/benoit/providers"
 	"github.com/fernandopn/benoit/tools"
-	"github.com/uptrace/bun"
 )
 
 type Config struct {
-	Model                    string
-	OpenAIAPIKey             string
-	OpenAIProviderParams     providers.OpenAIProviderParams
-	DB                       *bun.DB
-	BypassCompressionBarrier bool
+	Model                string
+	OpenAIAPIKey         string
+	OpenAIProviderParams providers.OpenAIProviderParams
+	SessionLookup        PreviousResponseLookup
+	MiddlewareFactories  []MiddlewareFactory
+	ProviderBuilder      ProviderBuilder
 }
 
 type sessionProviderEntry struct {
@@ -28,18 +26,20 @@ type sessionProviderEntry struct {
 }
 
 type providerFactory struct {
-	ctx          context.Context
-	cfg          Config
-	toolSet      []tools.Tool
-	sessionStore persistence.SessionStore
+	ctx           context.Context
+	cfg           Config
+	toolSet       []tools.Tool
+	sessionLookup PreviousResponseLookup
+	middleware    []MiddlewareFactory
+	providerFn    ProviderBuilder
 
 	mu       sync.Mutex
 	entries  map[string]sessionProviderEntry
 	provider providers.ProviderType
 }
 
-func NewRouterProvider(ctx context.Context, cfg Config, toolSet []tools.Tool, sessionStore persistence.SessionStore) (providers.Provider, func() error, error) {
-	factory := newProviderFactory(ctx, cfg, toolSet, sessionStore)
+func NewRouterProvider(ctx context.Context, cfg Config, toolSet []tools.Tool) (providers.Provider, func() error, error) {
+	factory := newProviderFactory(ctx, cfg, toolSet, cfg.SessionLookup)
 	router, err := newRouterProvider(factory)
 	if err != nil {
 		return nil, nil, err
@@ -47,17 +47,25 @@ func NewRouterProvider(ctx context.Context, cfg Config, toolSet []tools.Tool, se
 	return router, factory.Close, nil
 }
 
-func newProviderFactory(ctx context.Context, cfg Config, toolSet []tools.Tool, sessionStore persistence.SessionStore) *providerFactory {
+func newProviderFactory(ctx context.Context, cfg Config, toolSet []tools.Tool, sessionLookup PreviousResponseLookup) *providerFactory {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	providerFn := cfg.ProviderBuilder
+	if providerFn == nil {
+		providerFn = DefaultProviderBuilder
+	}
+	middlewares := make([]MiddlewareFactory, 0, len(cfg.MiddlewareFactories))
+	middlewares = append(middlewares, cfg.MiddlewareFactories...)
 	return &providerFactory{
-		ctx:          ctx,
-		cfg:          cfg,
-		toolSet:      toolSet,
-		sessionStore: sessionStore,
-		entries:      map[string]sessionProviderEntry{},
-		provider:     providers.ProviderTypeOpenAI,
+		ctx:           ctx,
+		cfg:           cfg,
+		toolSet:       toolSet,
+		sessionLookup: sessionLookup,
+		middleware:    middlewares,
+		providerFn:    providerFn,
+		entries:       map[string]sessionProviderEntry{},
+		provider:      providers.ProviderTypeOpenAI,
 	}
 }
 
@@ -99,38 +107,32 @@ func (f *providerFactory) providerForSession(sessionID string) (providers.Provid
 func (f *providerFactory) createProvider(sessionID string) (providers.Provider, func() error, error) {
 	params := f.cfg.OpenAIProviderParams
 	params.SessionID = sessionID
-	if f.sessionStore != nil {
-		state, found, err := f.sessionStore.GetSession(f.ctx, f.provider, sessionID)
+	if f.sessionLookup != nil {
+		previousID, found, err := f.sessionLookup.PreviousResponseID(f.ctx, f.provider, sessionID)
 		if err != nil {
 			return nil, nil, err
 		}
 		if found {
-			params.PreviousResponseID = strings.TrimSpace(state.PreviousResponseID)
+			params.PreviousResponseID = strings.TrimSpace(previousID)
 		}
 	}
 
-	openAIProvider, err := providers.NewOpenAI(f.cfg.Model, f.cfg.OpenAIAPIKey, params, f.toolSet)
+	provider, closeFn, err := f.providerFn(f.ctx, f.cfg.Model, f.cfg.OpenAIAPIKey, params, f.toolSet)
 	if err != nil {
 		return nil, nil, err
 	}
 
-	var provider providers.Provider = openAIProvider
-	provider = middleware.NewSessionStoreMiddleware(provider, f.sessionStore, f.provider, sessionID)
-
-	if f.cfg.DB != nil {
-		traceProvider, traceErr := middleware.NewPersistTrace(f.ctx, provider, f.provider, sessionID, f.cfg.DB)
-		if traceErr != nil {
-			return nil, nil, traceErr
-		}
-		provider = traceProvider
-	}
-	if !f.cfg.BypassCompressionBarrier {
-		provider, err = middleware.NewCompressionBarrier(provider)
+	var wrapped providers.Provider = provider
+	for _, middlewareFactory := range f.middleware {
+		wrapped, err = middlewareFactory(f.ctx, wrapped, f.provider, sessionID)
 		if err != nil {
+			if closeFn != nil {
+				_ = closeFn()
+			}
 			return nil, nil, err
 		}
 	}
-	return provider, nil, nil
+	return wrapped, closeFn, nil
 }
 
 func (f *providerFactory) Close() error {
