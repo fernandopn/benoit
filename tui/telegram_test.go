@@ -402,3 +402,48 @@ func TestIsTelegramUserAllowed(t *testing.T) {
 		t.Fatal("expected empty allowlist to deny explicit users")
 	}
 }
+
+func TestBuildAllowedTelegramUsers(t *testing.T) {
+	if got := buildAllowedTelegramUsers(nil); got != nil {
+		t.Fatalf("expected nil map for nil list, got %#v", got)
+	}
+
+	got := buildAllowedTelegramUsers([]int64{77, 0, 77, 99, 0})
+	if len(got) != 2 {
+		t.Fatalf("expected duplicate/invalid IDs to be filtered, got %v", got)
+	}
+	if _, ok := got[77]; !ok {
+		t.Fatal("expected allowed user 77")
+	}
+	if _, ok := got[99]; !ok {
+		t.Fatal("expected allowed user 99")
+	}
+
+	got = buildAllowedTelegramUsers([]int64{0, 0})
+	if got != nil {
+		t.Fatalf("expected nil map when all ids are zero, got %#v", got)
+	}
+}
+
+func TestSplitTelegramMessageSpecialCases(t *testing.T) {
+	chunks := splitTelegramMessage("", telegramMaxMessageLength)
+	if len(chunks) != 1 {
+		t.Fatalf("expected single fallback chunk for empty string, got %d", len(chunks))
+	}
+	if chunks[0] != "(empty response)" {
+		t.Fatalf("unexpected empty fallback %q", chunks[0])
+	}
+
+	single := "short response"
+	shortChunks := splitTelegramMessage(single, 100)
+	if len(shortChunks) != 1 {
+		t.Fatalf("expected one chunk for short response, got %d", len(shortChunks))
+	}
+	if shortChunks[0] != single {
+		t.Fatalf("expected original chunk unchanged, got %q", shortChunks[0])
+	}
+
+	if got := splitTelegramMessage("text", 0); len(got) != 1 || got[0] != "text" {
+		t.Fatalf("expected non-empty text with non-positive max to be unchanged, got %#v", got)
+	}
+}

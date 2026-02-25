@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
+	tuicmd "github.com/fernandopn/benoit/tui/commands"
 )
 
 func applyUpdate(t *testing.T, m model, msg tea.Msg) model {
@@ -137,5 +138,43 @@ func TestTypingHidesSuggestionTable(t *testing.T) {
 	}
 	if got := m.input.Value(); got != "/c" {
 		t.Fatalf("expected typed input to continue, got %q", got)
+	}
+}
+
+func TestCommandSuggestionsForPrefixDelegatesToSharedSuggestions(t *testing.T) {
+	got := commandSuggestionsForPrefix("/c")
+	want := tuicmd.SuggestionsForPrefix("/c")
+
+	if len(got) != len(want) {
+		t.Fatalf("expected %d suggestions, got %d", len(want), len(got))
+	}
+	for i := range want {
+		if got[i].Command != want[i].Command {
+			t.Fatalf("command mismatch at %d: got %q, want %q", i, got[i].Command, want[i].Command)
+		}
+		if got[i].Description != want[i].Description {
+			t.Fatalf("description mismatch at %d: got %q, want %q", i, got[i].Description, want[i].Description)
+		}
+	}
+}
+
+func TestSplitSlashCommandInputUsesSharedParser(t *testing.T) {
+	cmd, suffix, ok := splitSlashCommandInput("/compact\t100")
+	if !ok {
+		t.Fatal("expected slash command parsing to succeed")
+	}
+	if cmd != "/compact" {
+		t.Fatalf("expected command %q, got %q", "/compact", cmd)
+	}
+	if suffix != "\t100" {
+		t.Fatalf("expected suffix %q, got %q", "\\t100", suffix)
+	}
+
+	_, wantSuffix, wantOK := tuicmd.SplitSlashCommandInput("/compact\t100")
+	if !wantOK {
+		t.Fatal("expected shared parser to accept input")
+	}
+	if suffix != wantSuffix {
+		t.Fatalf("expected wrapper suffix %q to match shared parser %q", suffix, wantSuffix)
 	}
 }

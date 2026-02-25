@@ -31,6 +31,50 @@ type Parsed struct {
 	MaxWords int
 }
 
+type Suggestion struct {
+	Command     string
+	Description string
+}
+
+var knownSuggestions = []Suggestion{
+	{Command: CompactCommand, Description: "compact context"},
+	{Command: ExitCommand, Description: "quit session"},
+	{Command: QuitCommand, Description: "quit session"},
+}
+
+func KnownSuggestions() []Suggestion {
+	return append([]Suggestion(nil), knownSuggestions...)
+}
+
+func SuggestionsForPrefix(prefix string) []Suggestion {
+	prefix = strings.ToLower(strings.TrimSpace(prefix))
+	if prefix == "" || !strings.HasPrefix(prefix, "/") {
+		return nil
+	}
+
+	out := make([]Suggestion, 0, len(knownSuggestions))
+	for _, suggestion := range knownSuggestions {
+		if strings.HasPrefix(suggestion.Command, prefix) {
+			out = append(out, suggestion)
+		}
+	}
+	return out
+}
+
+func SplitSlashCommandInput(value string) (string, string, bool) {
+	if strings.Contains(value, "\n") {
+		return "", "", false
+	}
+	if !strings.HasPrefix(value, "/") {
+		return "", "", false
+	}
+	idx := strings.IndexAny(value, " \t")
+	if idx < 0 {
+		return value, "", true
+	}
+	return value[:idx], value[idx:], true
+}
+
 func Parse(input string) (Parsed, error) {
 	parts := strings.Fields(strings.TrimSpace(input))
 	if len(parts) == 0 {

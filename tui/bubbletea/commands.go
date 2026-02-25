@@ -4,34 +4,15 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/bubbles/table"
+	tuicmd "github.com/fernandopn/benoit/tui/commands"
 )
 
 func splitSlashCommandInput(value string) (string, string, bool) {
-	if strings.Contains(value, "\n") {
-		return "", "", false
-	}
-	if !strings.HasPrefix(value, "/") {
-		return "", "", false
-	}
-	idx := strings.IndexAny(value, " \t")
-	if idx < 0 {
-		return value, "", true
-	}
-	return value[:idx], value[idx:], true
+	return tuicmd.SplitSlashCommandInput(value)
 }
 
 func commandSuggestionsForPrefix(prefix string) []commandSuggestion {
-	prefix = strings.ToLower(strings.TrimSpace(prefix))
-	if prefix == "" || !strings.HasPrefix(prefix, "/") {
-		return nil
-	}
-	out := make([]commandSuggestion, 0, len(knownSlashCommands))
-	for _, cmd := range knownSlashCommands {
-		if strings.HasPrefix(cmd.Command, prefix) {
-			out = append(out, cmd)
-		}
-	}
-	return out
+	return tuicmd.SuggestionsForPrefix(prefix)
 }
 
 func (m *model) showCommandSuggestions(prefix string, suggestions []commandSuggestion) {

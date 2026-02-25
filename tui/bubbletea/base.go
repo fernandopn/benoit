@@ -21,16 +21,9 @@ const (
 	DefaultHelpText    = "Enter to send | See commands / + <tab>"
 )
 
-type commandSuggestion struct {
-	Command     string
-	Description string
-}
+type commandSuggestion = tuicmd.Suggestion
 
-var knownSlashCommands = []commandSuggestion{
-	{Command: tuicmd.CompactCommand, Description: "compact context"},
-	{Command: tuicmd.ExitCommand, Description: "quit session"},
-	{Command: tuicmd.QuitCommand, Description: "quit session"},
-}
+var knownSlashCommands = tuicmd.KnownSuggestions()
 
 type StreamStarter func(ctx context.Context, prompt string) (<-chan providers.Msg, context.CancelFunc, error)
 

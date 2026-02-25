@@ -2,6 +2,89 @@ package commands
 
 import "testing"
 
+func TestKnownSuggestions(t *testing.T) {
+	suggestions := KnownSuggestions()
+	if len(suggestions) != 3 {
+		t.Fatalf("expected 3 known suggestions, got %d", len(suggestions))
+	}
+	if suggestions[0].Command != CompactCommand {
+		t.Fatalf("expected first suggestion %q, got %q", CompactCommand, suggestions[0].Command)
+	}
+
+	copy := KnownSuggestions()
+	copy[0].Command = "/mutated"
+	again := KnownSuggestions()
+	if again[0].Command != CompactCommand {
+		t.Fatalf("expected KnownSuggestions to return a copy, got %q", again[0].Command)
+	}
+}
+
+func TestSuggestionsForPrefix(t *testing.T) {
+	tests := []struct {
+		name   string
+		prefix string
+		want   []string
+	}{
+		{name: "all from slash", prefix: "/", want: []string{CompactCommand, ExitCommand, QuitCommand}},
+		{name: "leading spaces", prefix: " /", want: []string{CompactCommand, ExitCommand, QuitCommand}},
+		{name: "trailing spaces", prefix: " /c  ", want: []string{CompactCommand}},
+		{name: "tab prefix", prefix: "\t/e", want: []string{ExitCommand}},
+		{name: "compact only", prefix: "/c", want: []string{CompactCommand}},
+		{name: "exit only", prefix: "/e", want: []string{ExitCommand}},
+		{name: "case-insensitive", prefix: "/C", want: []string{CompactCommand}},
+		{name: "compact whitespace", prefix: " /Compact ", want: []string{CompactCommand}},
+		{name: "no match", prefix: "/xyz", want: nil},
+		{name: "invalid prefix", prefix: "compact", want: nil},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			suggestions := SuggestionsForPrefix(tc.prefix)
+			if len(suggestions) != len(tc.want) {
+				t.Fatalf("SuggestionsForPrefix(%q) len = %d, want %d", tc.prefix, len(suggestions), len(tc.want))
+			}
+			for i := range suggestions {
+				if suggestions[i].Command != tc.want[i] {
+					t.Fatalf("SuggestionsForPrefix(%q)[%d] = %q, want %q", tc.prefix, i, suggestions[i].Command, tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+func TestSplitSlashCommandInput(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      string
+		wantCmd    string
+		wantSuffix string
+		wantOK     bool
+	}{
+		{name: "bare slash command", input: "/compact", wantCmd: "/compact", wantSuffix: "", wantOK: true},
+		{name: "command with args", input: "/compact 100", wantCmd: "/compact", wantSuffix: " 100", wantOK: true},
+		{name: "command with trailing spaces", input: "/compact   ", wantCmd: "/compact", wantSuffix: "   ", wantOK: true},
+		{name: "command with tab args", input: "/compact\t100", wantCmd: "/compact", wantSuffix: "\t100", wantOK: true},
+		{name: "non slash input", input: "hello", wantCmd: "", wantSuffix: "", wantOK: false},
+		{name: "leading space", input: " /compact", wantCmd: "", wantSuffix: "", wantOK: false},
+		{name: "multiline slash input", input: "/compact\nnext", wantCmd: "", wantSuffix: "", wantOK: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotCmd, gotSuffix, gotOK := SplitSlashCommandInput(tc.input)
+			if gotOK != tc.wantOK {
+				t.Fatalf("SplitSlashCommandInput(%q) ok = %v, want %v", tc.input, gotOK, tc.wantOK)
+			}
+			if gotCmd != tc.wantCmd {
+				t.Fatalf("SplitSlashCommandInput(%q) command = %q, want %q", tc.input, gotCmd, tc.wantCmd)
+			}
+			if gotSuffix != tc.wantSuffix {
+				t.Fatalf("SplitSlashCommandInput(%q) suffix = %q, want %q", tc.input, gotSuffix, tc.wantSuffix)
+			}
+		})
+	}
+}
+
 func TestParseCompact(t *testing.T) {
 	parsed, err := Parse("/compact")
 	if err != nil {

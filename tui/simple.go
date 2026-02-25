@@ -40,10 +40,11 @@ func RunSimple(ctx context.Context, provider providers.Provider, timeout time.Du
 	writer.Flush()
 
 	for {
-		fmt.Fprint(writer, colors.Style(">: ", colors.Bold, colors.FGAccent))
+		prompt := colors.Style(">: ", colors.Bold, colors.FGAccent)
+		fmt.Fprint(writer, prompt)
 		writer.Flush()
 
-		line, err := readSimpleInput(reader, writer)
+		line, err := readSimpleInput(reader, writer, prompt)
 		if err != nil && err != io.EOF {
 			fmt.Fprintln(os.Stderr, "read error:", err)
 			return
@@ -154,14 +155,14 @@ func writeSimpleHeader(writer *bufio.Writer, colors simpleTheme, providerName st
 	simpleui.WriteHeader(writer, colors, title, hint, width)
 }
 
-func readSimpleInput(reader *bufio.Reader, writer *bufio.Writer) (string, error) {
+func readSimpleInput(reader *bufio.Reader, writer *bufio.Writer, prompt string) (string, error) {
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
 		return reader.ReadString('\n')
 	}
-	return readSimpleInputRaw(reader, writer)
+	return readSimpleInputRaw(reader, writer, prompt)
 }
 
-func readSimpleInputRaw(reader *bufio.Reader, writer *bufio.Writer) (string, error) {
+func readSimpleInputRaw(reader *bufio.Reader, writer *bufio.Writer, prompt string) (string, error) {
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -213,6 +214,30 @@ func readSimpleInputRaw(reader *bufio.Reader, writer *bufio.Writer) (string, err
 			input = input[:len(input)-1]
 			fmt.Fprint(writer, "\b \b")
 			writer.Flush()
+		case '\t':
+			justInsertedNewline = false
+			current := string(input)
+			next, suggestions, handled := completeSimpleSlashInput(current)
+			if !handled {
+				input = append(input, '\t')
+				if _, err := writer.Write([]byte{'\t'}); err != nil {
+					return "", err
+				}
+				writer.Flush()
+				continue
+			}
+			if next != current {
+				if err := replaceSimpleInput(writer, input, next); err != nil {
+					return "", err
+				}
+				input = []rune(next)
+				continue
+			}
+			if len(suggestions) > 1 {
+				if err := printSimpleCompletionSuggestions(writer, prompt, current, suggestions); err != nil {
+					return "", err
+				}
+			}
 		case 0x1b:
 			seq, err := readEscapeSequence(reader)
 			if err != nil {
@@ -228,7 +253,7 @@ func readSimpleInputRaw(reader *bufio.Reader, writer *bufio.Writer) (string, err
 			}
 		default:
 			justInsertedNewline = false
-			if b < 0x20 && b != '\t' {
+			if b < 0x20 {
 				continue
 			}
 			r, raw, err := decodeRuneFromFirstByte(reader, b)
@@ -242,6 +267,57 @@ func readSimpleInputRaw(reader *bufio.Reader, writer *bufio.Writer) (string, err
 			writer.Flush()
 		}
 	}
+}
+
+func completeSimpleSlashInput(value string) (string, []tuicmd.Suggestion, bool) {
+	command, suffix, ok := tuicmd.SplitSlashCommandInput(value)
+	if !ok {
+		return value, nil, false
+	}
+
+	suggestions := tuicmd.SuggestionsForPrefix(command)
+	if len(suggestions) == 1 {
+		return suggestions[0].Command + suffix, suggestions, true
+	}
+	return value, suggestions, true
+}
+
+func replaceSimpleInput(writer *bufio.Writer, current []rune, next string) error {
+	for range current {
+		if _, err := writer.WriteString("\b \b"); err != nil {
+			return err
+		}
+	}
+	if _, err := writer.WriteString(next); err != nil {
+		return err
+	}
+	return writer.Flush()
+}
+
+func printSimpleCompletionSuggestions(writer *bufio.Writer, prompt string, current string, suggestions []tuicmd.Suggestion) error {
+	if len(suggestions) == 0 {
+		return nil
+	}
+	if _, err := writer.WriteString("\r\n"); err != nil {
+		return err
+	}
+	for _, suggestion := range suggestions {
+		line := "  " + suggestion.Command
+		description := strings.TrimSpace(suggestion.Description)
+		if description != "" {
+			line += " - " + description
+		}
+		if _, err := writer.WriteString(line + "\r\n"); err != nil {
+			return err
+		}
+	}
+	if _, err := writer.WriteString(prompt); err != nil {
+		return err
+	}
+	if _, err := writer.WriteString(current); err != nil {
+		return err
+	}
+	return writer.Flush()
 }
 
 func readEscapeSequence(reader *bufio.Reader) (string, error) {
