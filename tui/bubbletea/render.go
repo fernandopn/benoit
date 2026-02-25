@@ -214,15 +214,16 @@ func (m model) renderToolWidget(b block) (string, bool) {
 	args := formatToolArgs(strings.TrimSpace(b.ToolArgs))
 	result := strings.TrimSpace(b.ToolResult)
 	expandable := false
-	hasResult := result != ""
 
 	state := b.ToolState
-	if hasResult && state == toolExecutionPending {
+	if (b.ToolResultReceived || result != "") && state == toolExecutionPending {
 		state = toolExecutionDone
 	}
 
-	if result == "" {
+	if state == toolExecutionPending && !b.ToolResultReceived && result == "" {
 		result = m.toolPendingStyle.Render(m.toolSpinnerLabel())
+	} else if result == "" {
+		result = m.toolMetaStyle.Render("(empty output)")
 	} else if !b.ToolResultExpanded {
 		preview, truncated := truncateLines(result, toolResultPreviewLines)
 		result = preview

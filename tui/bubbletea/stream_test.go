@@ -49,6 +49,9 @@ func TestApplyStreamMessagesMergesToolResultIntoCallBlock(t *testing.T) {
 	if toolBlock.ToolState != toolExecutionDone {
 		t.Fatalf("expected tool block to be marked done, got state %d", toolBlock.ToolState)
 	}
+	if !toolBlock.ToolResultReceived {
+		t.Fatalf("expected tool block to mark tool result as received")
+	}
 }
 
 func TestApplyStreamMessagesMarksPendingToolError(t *testing.T) {
@@ -267,6 +270,92 @@ func TestAppendToolResultForUnknownCallIDCreatesNewBlock(t *testing.T) {
 	toolBlock := latestToolBlock(m.blocks)
 	if toolBlock.ToolState != toolExecutionDone {
 		t.Fatalf("expected new tool block to be done, got %d", toolBlock.ToolState)
+	}
+	if !toolBlock.ToolResultReceived {
+		t.Fatalf("expected new tool block to mark tool result as received")
+	}
+}
+
+func TestApplyStreamMessagesEmptyToolResultStillCompletesBlock(t *testing.T) {
+	m := newTestModel()
+	meta := map[string]string{"tool": "glob", "call_id": "call-empty"}
+
+	m.applyStreamMessages([]providers.Msg{{
+		Type:     providers.MsgTypeToolCall,
+		Value:    `{"path":"/","pattern":"**/*"}`,
+		Metadata: meta,
+	}})
+
+	if !m.hasPendingToolResults() {
+		t.Fatalf("expected pending tool while waiting for result")
+	}
+
+	m.applyStreamMessages([]providers.Msg{{
+		Type:     providers.MsgTypeToolResult,
+		Value:    "",
+		Metadata: meta,
+	}})
+
+	if m.hasPendingToolResults() {
+		t.Fatalf("expected pending tool state to clear after empty result")
+	}
+
+	toolBlock := latestToolBlock(m.blocks)
+	if toolBlock == nil {
+		t.Fatalf("expected tool block after empty result")
+	}
+	if toolBlock.ToolState != toolExecutionDone {
+		t.Fatalf("expected empty result to mark tool as done, got %d", toolBlock.ToolState)
+	}
+	if !toolBlock.ToolResultReceived {
+		t.Fatalf("expected empty result to mark tool result as received")
+	}
+}
+
+func TestAppendToolCallDoesNotRevertCompletedEmptyResultToPending(t *testing.T) {
+	m := newTestModel()
+	meta := map[string]string{"tool": "glob", "call_id": "call-reappend"}
+
+	m.appendToolCall(`{"path":"/"}`, meta)
+	m.appendToolResult("", meta)
+	m.appendToolCall(`{"pattern":"*"}`, meta)
+
+	toolBlock := latestToolBlock(m.blocks)
+	if toolBlock == nil {
+		t.Fatalf("expected tool block")
+	}
+	if toolBlock.ToolState != toolExecutionDone {
+		t.Fatalf("expected tool to remain done after extra args chunk, got %d", toolBlock.ToolState)
+	}
+	if m.hasPendingToolResults() {
+		t.Fatalf("expected no pending tool results after completion")
+	}
+}
+
+func TestSyncToolSpinnerStopsWhenEmptyResultArrives(t *testing.T) {
+	m := newTestModel()
+	meta := map[string]string{"tool": "glob", "call_id": "call-spinner"}
+
+	m.appendToolCall(`{"path":"/","pattern":"**/*"}`, meta)
+	if !m.hasPendingToolResults() {
+		t.Fatalf("expected pending tool before result")
+	}
+	if cmd := m.syncToolSpinner(); cmd == nil {
+		t.Fatalf("expected spinner tick command to be scheduled while pending")
+	}
+	if !m.toolSpinnerActive {
+		t.Fatalf("expected spinner to be active while pending")
+	}
+
+	m.appendToolResult("", meta)
+	if m.hasPendingToolResults() {
+		t.Fatalf("expected pending tool to clear after empty result")
+	}
+	if cmd := m.syncToolSpinner(); cmd != nil {
+		t.Fatalf("expected no spinner command after completion")
+	}
+	if m.toolSpinnerActive {
+		t.Fatalf("expected spinner to be inactive after completion")
 	}
 }
 

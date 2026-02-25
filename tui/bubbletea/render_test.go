@@ -171,3 +171,72 @@ func TestLocateToolExpandTargetsWithNoContent(t *testing.T) {
 		t.Fatalf("expected no targets for nil indexes, got %d", len(got))
 	}
 }
+
+func TestRenderToolWidgetCompletedEmptyResultShowsPlaceholder(t *testing.T) {
+	m := newTestModel()
+	m.vp.Width = 120
+
+	rendered, expandable := m.renderToolWidget(block{
+		Kind:               blockToolWidget,
+		ToolArgs:           `{"query":"test"}`,
+		ToolResult:         "",
+		ToolResultReceived: true,
+		ToolState:          toolExecutionDone,
+	})
+
+	if expandable {
+		t.Fatalf("expected empty output to not be expandable")
+	}
+
+	plain := ansi.Strip(rendered)
+	if !strings.Contains(plain, "(empty output)") {
+		t.Fatalf("expected empty output placeholder in render: %q", plain)
+	}
+	if strings.Contains(plain, "Running") {
+		t.Fatalf("did not expect pending spinner label for completed empty output")
+	}
+}
+
+func TestRenderToolWidgetPendingWithoutResultShowsRunning(t *testing.T) {
+	m := newTestModel()
+	m.vp.Width = 120
+
+	rendered, expandable := m.renderToolWidget(block{
+		Kind:      blockToolWidget,
+		ToolArgs:  `{"query":"test"}`,
+		ToolState: toolExecutionPending,
+	})
+
+	if expandable {
+		t.Fatalf("expected pending output to not be expandable")
+	}
+
+	plain := ansi.Strip(rendered)
+	if !strings.Contains(plain, "Running") {
+		t.Fatalf("expected pending spinner label in render: %q", plain)
+	}
+}
+
+func TestRenderToolWidgetPendingWithResultTextTreatsAsCompleted(t *testing.T) {
+	m := newTestModel()
+	m.vp.Width = 120
+
+	rendered, expandable := m.renderToolWidget(block{
+		Kind:       blockToolWidget,
+		ToolArgs:   `{"query":"test"}`,
+		ToolResult: "ok",
+		ToolState:  toolExecutionPending,
+	})
+
+	if expandable {
+		t.Fatalf("expected short output to not be expandable")
+	}
+
+	plain := ansi.Strip(rendered)
+	if !strings.Contains(plain, "ok") {
+		t.Fatalf("expected rendered output to include result text: %q", plain)
+	}
+	if strings.Contains(plain, "Running") {
+		t.Fatalf("did not expect pending spinner label when result text exists")
+	}
+}

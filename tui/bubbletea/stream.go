@@ -123,7 +123,7 @@ func (m *model) appendToolCall(text string, meta map[string]string) {
 			if block.Kind == blockToolWidget {
 				block.ToolArgs += text
 				ensureToolMeta(block, callID, toolName)
-				if block.ToolState != toolExecutionError && strings.TrimSpace(block.ToolResult) == "" {
+				if block.ToolState != toolExecutionError && !block.ToolResultReceived && strings.TrimSpace(block.ToolResult) == "" {
 					block.ToolState = toolExecutionPending
 				}
 				return
@@ -157,6 +157,7 @@ func (m *model) appendToolResult(text string, meta map[string]string) {
 			block := &m.blocks[idx]
 			if block.Kind == blockToolWidget {
 				block.ToolResult += text
+				block.ToolResultReceived = true
 				ensureToolMeta(block, callID, toolName)
 				block.ToolState = toolExecutionDone
 				return
@@ -165,10 +166,11 @@ func (m *model) appendToolResult(text string, meta map[string]string) {
 	}
 
 	newBlock := block{
-		Kind:       blockToolWidget,
-		Meta:       cloneMeta(meta),
-		ToolResult: text,
-		ToolState:  toolExecutionDone,
+		Kind:               blockToolWidget,
+		Meta:               cloneMeta(meta),
+		ToolResult:         text,
+		ToolResultReceived: true,
+		ToolState:          toolExecutionDone,
 	}
 	if callID != "" {
 		ensureToolMeta(&newBlock, callID, toolName)
@@ -242,7 +244,7 @@ func (m *model) hasPendingToolResults() bool {
 		if m.blocks[i].Kind != blockToolWidget {
 			continue
 		}
-		if m.blocks[i].ToolState == toolExecutionPending && strings.TrimSpace(m.blocks[i].ToolResult) == "" {
+		if m.blocks[i].ToolState == toolExecutionPending && !m.blocks[i].ToolResultReceived && strings.TrimSpace(m.blocks[i].ToolResult) == "" {
 			return true
 		}
 	}

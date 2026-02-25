@@ -61,6 +61,7 @@ type block struct {
 	Meta               map[string]string
 	ToolArgs           string
 	ToolResult         string
+	ToolResultReceived bool
 	ToolState          toolExecutionState
 	ToolResultExpanded bool
 }
