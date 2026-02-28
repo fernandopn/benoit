@@ -7,6 +7,7 @@ official Go SDK.
 
 - `OPENAI_API_KEY=... go run . tui --render simple`
 - `OPENAI_API_KEY=... MATON_API_KEY=... go run . tui --render bubbletea`
+- `go run . tui --env-file .env --render simple`
 - `OPENAI_API_KEY=... go run . ssh`
 - `OPENAI_API_KEY=... TELEGRAM_API_KEY=... go run . channel_listener --channel telegram`
 - `go run . list_sessions`
@@ -33,6 +34,11 @@ official Go SDK.
 - `-db-path`
   - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
+- `-env-file`
+  - optional `.env` file path loaded before reading process environment variables
+  - values from this file take precedence over process environment values
+  - if the file does not exist, startup continues normally
+  - default: `.env`
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
   - default: `false`
@@ -49,6 +55,7 @@ official Go SDK.
   - `-timeout` request timeout (for example: `45s`, `2m`) (default: `20m`)
   - `-fs-root` filesystem sandbox root for file tools; if omitted, file tools are not registered (default: current working directory)
   - `-db-path` database path used for provider trace logging and per-session state (default: `db.sqlite`)
+  - `-env-file` optional `.env` file path loaded before process environment values (default: `.env`)
   - `-bypass-compression-barrier` disable compression barrier middleware (default: `false`)
   - `--session-id` resume an existing session ID
 - SSH-specific flag:
@@ -75,6 +82,9 @@ official Go SDK.
 - `-db-path`
   - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
+- `-env-file`
+  - optional `.env` file path loaded before process environment values
+  - default: `.env`
 - `-bypass-compression-barrier`
   - disable compression barrier middleware
   - default: `false`
@@ -90,6 +100,9 @@ official Go SDK.
 - `-db-path`
   - database path used for both provider trace logging and per-session provider state
   - default: `db.sqlite`
+- `-env-file`
+  - optional `.env` file path loaded before process environment values
+  - default: `.env`
 - `-fs-root`
   - reserved for shared config; not used by `list_sessions`
   - default: current working directory
@@ -97,6 +110,7 @@ official Go SDK.
 ## Behavior notes
 
 - Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
+- When `-env-file` is set (or default `.env` exists), values in that file are checked before process environment variables.
 - Tools always enabled in provider commands: `code_interpreter`, `web_search`, `get_time`.
 - Interactive modes (`tui`, `ssh`) enable filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
 - File tool paths are virtualized when `-fs-root` is set: `/` maps to the configured sandbox root on disk, and all resolved paths are still validated against the allowed prefix policy.

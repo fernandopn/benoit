@@ -57,6 +57,7 @@ type Config struct {
 	Channel                    ChannelMode
 	SessionID                  string
 	SSHPort                    int
+	EnvFilePath                string
 	Model                      string
 	Timeout                    time.Duration
 	FSRoot                     string
@@ -77,6 +78,7 @@ const (
 	defaultSSHPort                    = 23234
 	defaultSSHHostKeyPath             = "data/ssh/host_ed25519"
 	allowedSSHPublicKey               = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local"
+	defaultEnvFilePath                = ".env"
 	defaultDBPath                     = "db.sqlite"
 	defaultTelegramPollTimeoutSeconds = 30
 	defaultTelegramAllowedUsers       = ""
@@ -104,7 +106,12 @@ func run() error {
 		return err
 	}
 
-	creds, err := loadCredentials(cfg)
+	envFileValues, err := loadDotEnvIfExists(cfg.EnvFilePath)
+	if err != nil {
+		return err
+	}
+
+	creds, err := loadCredentials(cfg, envFileValues)
 	if err != nil {
 		return err
 	}
@@ -544,8 +551,9 @@ func loadConfig(defaultRoot string, args []string) (Config, error) {
 }
 
 type sharedStorageFlags struct {
-	fsRoot *string
-	dbPath *string
+	fsRoot  *string
+	dbPath  *string
+	envFile *string
 }
 
 type sharedProviderFlags struct {
@@ -557,8 +565,9 @@ type sharedProviderFlags struct {
 
 func bindStorageFlags(flagSet *flag.FlagSet, defaultRoot string) sharedStorageFlags {
 	return sharedStorageFlags{
-		fsRoot: flagSet.String("fs-root", defaultRoot, "filesystem sandbox root (chroot for file tools)"),
-		dbPath: flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence"),
+		fsRoot:  flagSet.String("fs-root", defaultRoot, "filesystem sandbox root (chroot for file tools)"),
+		dbPath:  flagSet.String("db-path", defaultDBPath, "db path for trace and session persistence"),
+		envFile: flagSet.String("env-file", defaultEnvFilePath, "optional .env file path for credentials"),
 	}
 }
 
@@ -633,6 +642,7 @@ func loadInteractiveConfig(command Command, defaultRoot string, args []string) (
 		SessionID:                strings.TrimSpace(*sessionID),
 		Model:                    strings.TrimSpace(*shared.model),
 		Timeout:                  *shared.timeout,
+		EnvFilePath:              strings.TrimSpace(*shared.storage.envFile),
 		FSRoot:                   strings.TrimSpace(*shared.storage.fsRoot),
 		FSRootProvided:           fsRootProvided,
 		DBPath:                   strings.TrimSpace(*shared.storage.dbPath),
@@ -671,6 +681,7 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 		Channel:                    channel,
 		Model:                      strings.TrimSpace(*shared.model),
 		Timeout:                    *shared.timeout,
+		EnvFilePath:                strings.TrimSpace(*shared.storage.envFile),
 		FSRoot:                     strings.TrimSpace(*shared.storage.fsRoot),
 		FSRootProvided:             fsRootProvided,
 		DBPath:                     strings.TrimSpace(*shared.storage.dbPath),
@@ -689,23 +700,24 @@ func loadListSessionsConfig(defaultRoot string, args []string) (Config, error) {
 	fsRootProvided := flagIsSet(flagSet, "fs-root")
 	return Config{
 		Command:        CommandListSessions,
+		EnvFilePath:    strings.TrimSpace(*storage.envFile),
 		FSRoot:         strings.TrimSpace(*storage.fsRoot),
 		FSRootProvided: fsRootProvided,
 		DBPath:         strings.TrimSpace(*storage.dbPath),
 	}, nil
 }
 
-func loadCredentials(cfg Config) (CredentialConfig, error) {
+func loadCredentials(cfg Config, envFileValues map[string]string) (CredentialConfig, error) {
 	creds := CredentialConfig{
-		TelegramBotToken: strings.TrimSpace(os.Getenv(telegramAPIKeyEnv)),
-		MatonAPIKey:      strings.TrimSpace(os.Getenv(matonAPIKeyEnv)),
+		TelegramBotToken: lookupEnvValue(telegramAPIKeyEnv, envFileValues),
+		MatonAPIKey:      lookupEnvValue(matonAPIKeyEnv, envFileValues),
 	}
 
 	if cfg.Command == CommandListSessions {
 		return creds, nil
 	}
 
-	openAIAPIKey, err := requiredEnv(openAIAPIKeyEnv)
+	openAIAPIKey, err := requiredEnv(openAIAPIKeyEnv, envFileValues)
 	if err != nil {
 		return CredentialConfig{}, fmt.Errorf("credential error: %w", err)
 	}
@@ -718,10 +730,87 @@ func loadCredentials(cfg Config) (CredentialConfig, error) {
 	return creds, nil
 }
 
-func requiredEnv(name string) (string, error) {
-	value := strings.TrimSpace(os.Getenv(name))
+func requiredEnv(name string, envFileValues map[string]string) (string, error) {
+	value := lookupEnvValue(name, envFileValues)
 	if value == "" {
 		return "", fmt.Errorf("%s is not set", name)
+	}
+	return value, nil
+}
+
+func lookupEnvValue(name string, envFileValues map[string]string) string {
+	if envFileValues != nil {
+		if value, ok := envFileValues[name]; ok {
+			return strings.TrimSpace(value)
+		}
+	}
+	return strings.TrimSpace(os.Getenv(name))
+}
+
+func loadDotEnvIfExists(path string) (map[string]string, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil
+	}
+
+	content, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("env file read error: %w", err)
+	}
+
+	values := make(map[string]string)
+	lines := strings.Split(string(content), "\n")
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if strings.HasPrefix(line, "export ") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "export "))
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return nil, fmt.Errorf("env file parse error at line %d: missing '='", i+1)
+		}
+		key = strings.TrimSpace(key)
+		if key == "" {
+			return nil, fmt.Errorf("env file parse error at line %d: empty key", i+1)
+		}
+		value = strings.TrimSpace(value)
+
+		parsedValue, parseErr := parseDotEnvValue(value)
+		if parseErr != nil {
+			return nil, fmt.Errorf("env file parse error at line %d: %w", i+1, parseErr)
+		}
+		values[key] = parsedValue
+	}
+
+	return values, nil
+}
+
+func parseDotEnvValue(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	if len(value) >= 2 {
+		if value[0] == '"' && value[len(value)-1] == '"' {
+			unquoted, err := strconv.Unquote(value)
+			if err != nil {
+				return "", err
+			}
+			return unquoted, nil
+		}
+		if value[0] == '\'' && value[len(value)-1] == '\'' {
+			return value[1 : len(value)-1], nil
+		}
+	}
+
+	if commentIndex := strings.Index(value, " #"); commentIndex >= 0 {
+		value = strings.TrimSpace(value[:commentIndex])
 	}
 	return value, nil
 }

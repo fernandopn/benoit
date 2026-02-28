@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -10,7 +12,7 @@ import (
 func TestLoadCredentials(t *testing.T) {
 	t.Run("openai required", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "")
-		_, err := loadCredentials(Config{Command: CommandTUI})
+		_, err := loadCredentials(Config{Command: CommandTUI}, nil)
 		if err == nil {
 			t.Fatal("expected missing OPENAI_API_KEY error")
 		}
@@ -22,7 +24,7 @@ func TestLoadCredentials(t *testing.T) {
 	t.Run("telegram required in telegram mode", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
-		_, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram})
+		_, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, nil)
 		if err == nil {
 			t.Fatal("expected missing TELEGRAM_API_KEY error")
 		}
@@ -35,7 +37,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
 		t.Setenv(matonAPIKeyEnv, "")
-		creds, err := loadCredentials(Config{Command: CommandTUI})
+		creds, err := loadCredentials(Config{Command: CommandTUI}, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -54,7 +56,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
 		t.Setenv(matonAPIKeyEnv, "")
-		creds, err := loadCredentials(Config{Command: CommandTUI})
+		creds, err := loadCredentials(Config{Command: CommandTUI}, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -67,7 +69,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "  openai-key  ")
 		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
 		t.Setenv(matonAPIKeyEnv, "  maton-key  ")
-		creds, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram})
+		creds, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -79,6 +81,109 @@ func TestLoadCredentials(t *testing.T) {
 		}
 		if creds.MatonAPIKey != "maton-key" {
 			t.Fatalf("unexpected Maton key: %q", creds.MatonAPIKey)
+		}
+	})
+
+	t.Run("env file values override process env", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-from-env")
+		t.Setenv(telegramAPIKeyEnv, "telegram-from-env")
+		t.Setenv(matonAPIKeyEnv, "maton-from-env")
+
+		envFileValues := map[string]string{
+			openAIAPIKeyEnv:   "openai-from-file",
+			telegramAPIKeyEnv: "telegram-from-file",
+			matonAPIKeyEnv:    "maton-from-file",
+		}
+
+		creds, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, envFileValues)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.OpenAIAPIKey != "openai-from-file" {
+			t.Fatalf("unexpected OpenAI key: %q", creds.OpenAIAPIKey)
+		}
+		if creds.TelegramBotToken != "telegram-from-file" {
+			t.Fatalf("unexpected telegram token: %q", creds.TelegramBotToken)
+		}
+		if creds.MatonAPIKey != "maton-from-file" {
+			t.Fatalf("unexpected Maton key: %q", creds.MatonAPIKey)
+		}
+	})
+
+	t.Run("falls back to process env when env file is missing key", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-from-env")
+		t.Setenv(telegramAPIKeyEnv, "")
+		t.Setenv(matonAPIKeyEnv, "")
+
+		envFileValues := map[string]string{}
+		creds, err := loadCredentials(Config{Command: CommandTUI}, envFileValues)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.OpenAIAPIKey != "openai-from-env" {
+			t.Fatalf("unexpected OpenAI key: %q", creds.OpenAIAPIKey)
+		}
+	})
+}
+
+func TestLoadDotEnvIfExists(t *testing.T) {
+	t.Run("missing file", func(t *testing.T) {
+		values, err := loadDotEnvIfExists(filepath.Join(t.TempDir(), "missing.env"))
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(values) != 0 {
+			t.Fatalf("expected empty values, got %v", values)
+		}
+	})
+
+	t.Run("loads values", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".env")
+		content := strings.Join([]string{
+			"# comment",
+			"OPENAI_API_KEY=openai-from-file",
+			"TELEGRAM_API_KEY=\"telegram from file\"",
+			"MATON_API_KEY='maton-from-file'",
+			"export EXTRA=value",
+			"TRIMMED=value # trailing comment",
+			"",
+		}, "\n")
+		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("write env file: %v", err)
+		}
+
+		values, err := loadDotEnvIfExists(path)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if values[openAIAPIKeyEnv] != "openai-from-file" {
+			t.Fatalf("unexpected OpenAI value: %q", values[openAIAPIKeyEnv])
+		}
+		if values[telegramAPIKeyEnv] != "telegram from file" {
+			t.Fatalf("unexpected telegram value: %q", values[telegramAPIKeyEnv])
+		}
+		if values[matonAPIKeyEnv] != "maton-from-file" {
+			t.Fatalf("unexpected Maton value: %q", values[matonAPIKeyEnv])
+		}
+		if values["EXTRA"] != "value" {
+			t.Fatalf("unexpected EXTRA value: %q", values["EXTRA"])
+		}
+		if values["TRIMMED"] != "value" {
+			t.Fatalf("unexpected TRIMMED value: %q", values["TRIMMED"])
+		}
+	})
+
+	t.Run("parse error", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), ".env")
+		if err := os.WriteFile(path, []byte("BROKEN_LINE"), 0o600); err != nil {
+			t.Fatalf("write env file: %v", err)
+		}
+		_, err := loadDotEnvIfExists(path)
+		if err == nil {
+			t.Fatal("expected parse error")
+		}
+		if !strings.Contains(err.Error(), "line 1") {
+			t.Fatalf("unexpected error: %v", err)
 		}
 	})
 }
@@ -188,6 +293,9 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		if cfg.DBPath != defaultDBPath {
 			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
+		if cfg.EnvFilePath != defaultEnvFilePath {
+			t.Fatalf("unexpected default env file path: %q", cfg.EnvFilePath)
+		}
 	})
 
 	t.Run("ssh", func(t *testing.T) {
@@ -197,6 +305,9 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		}
 		if cfg.DBPath != defaultDBPath {
 			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
+		}
+		if cfg.EnvFilePath != defaultEnvFilePath {
+			t.Fatalf("unexpected default env file path: %q", cfg.EnvFilePath)
 		}
 		if cfg.SSHPort != defaultSSHPort {
 			t.Fatalf("unexpected default ssh port: %d", cfg.SSHPort)
@@ -211,6 +322,9 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		if cfg.DBPath != defaultDBPath {
 			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
+		if cfg.EnvFilePath != defaultEnvFilePath {
+			t.Fatalf("unexpected default env file path: %q", cfg.EnvFilePath)
+		}
 		if len(cfg.TelegramAllowedUserIDs) != 0 {
 			t.Fatalf("expected empty default telegram allowlist, got %v", cfg.TelegramAllowedUserIDs)
 		}
@@ -223,6 +337,9 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		}
 		if cfg.DBPath != defaultDBPath {
 			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
+		}
+		if cfg.EnvFilePath != defaultEnvFilePath {
+			t.Fatalf("unexpected default env file path: %q", cfg.EnvFilePath)
 		}
 	})
 }
@@ -256,6 +373,9 @@ func TestLoadSSHConfigMatchesTUISharedFlags(t *testing.T) {
 	}
 	if tuiCfg.Timeout != sshCfg.Timeout {
 		t.Fatalf("timeout mismatch: tui=%v ssh=%v", tuiCfg.Timeout, sshCfg.Timeout)
+	}
+	if tuiCfg.EnvFilePath != sshCfg.EnvFilePath {
+		t.Fatalf("env file mismatch: tui=%q ssh=%q", tuiCfg.EnvFilePath, sshCfg.EnvFilePath)
 	}
 	if tuiCfg.FSRoot != sshCfg.FSRoot {
 		t.Fatalf("fs root mismatch: tui=%q ssh=%q", tuiCfg.FSRoot, sshCfg.FSRoot)
@@ -312,6 +432,48 @@ func TestLoadSSHConfigPortFlag(t *testing.T) {
 	if cfg.SSHPort != 2200 {
 		t.Fatalf("unexpected ssh port: %d", cfg.SSHPort)
 	}
+}
+
+func TestLoadConfigEnvFileFlag(t *testing.T) {
+	t.Run("tui", func(t *testing.T) {
+		cfg, err := loadTUIConfig("/tmp/benoit", []string{"-env-file", "./custom.env"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.EnvFilePath != "./custom.env" {
+			t.Fatalf("unexpected env file path: %q", cfg.EnvFilePath)
+		}
+	})
+
+	t.Run("ssh", func(t *testing.T) {
+		cfg, err := loadSSHConfig("/tmp/benoit", []string{"-env-file", "./custom.env"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.EnvFilePath != "./custom.env" {
+			t.Fatalf("unexpected env file path: %q", cfg.EnvFilePath)
+		}
+	})
+
+	t.Run("channel_listener", func(t *testing.T) {
+		cfg, err := loadChannelListenerConfig("/tmp/benoit", []string{"-env-file", "./custom.env"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.EnvFilePath != "./custom.env" {
+			t.Fatalf("unexpected env file path: %q", cfg.EnvFilePath)
+		}
+	})
+
+	t.Run("list_sessions", func(t *testing.T) {
+		cfg, err := loadListSessionsConfig("/tmp/benoit", []string{"-env-file", "./custom.env"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.EnvFilePath != "./custom.env" {
+			t.Fatalf("unexpected env file path: %q", cfg.EnvFilePath)
+		}
+	})
 }
 
 func TestLoadTUIConfigFSRootFlag(t *testing.T) {
