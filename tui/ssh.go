@@ -27,12 +27,12 @@ import (
 const sshShutdownTimeout = 30 * time.Second
 
 type SSHConfig struct {
-	Address          string
-	HostKeyPath      string
-	AllowedPublicKey string
-	Timeout          time.Duration
-	UseSimple        bool
-	SessionID        string
+	Address           string
+	HostKeyPath       string
+	AllowedPublicKeys []string
+	Timeout           time.Duration
+	UseSimple         bool
+	SessionID         string
 }
 
 func RunSSH(ctx context.Context, provider providers.Provider, cfg SSHConfig) error {
@@ -51,13 +51,20 @@ func RunSSH(ctx context.Context, provider providers.Provider, cfg SSHConfig) err
 	if hostKeyPath == "" {
 		return errors.New("ssh host key path is required")
 	}
-	allowedPublicKey := strings.TrimSpace(cfg.AllowedPublicKey)
-	if allowedPublicKey == "" {
-		return errors.New("ssh allowed public key is required")
+	allowedKeys := make([]ssh.PublicKey, 0, len(cfg.AllowedPublicKeys))
+	for _, rawKey := range cfg.AllowedPublicKeys {
+		rawKey = strings.TrimSpace(rawKey)
+		if rawKey == "" {
+			continue
+		}
+		parsedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(rawKey))
+		if err != nil {
+			return fmt.Errorf("invalid allowed ssh public key: %w", err)
+		}
+		allowedKeys = append(allowedKeys, parsedKey)
 	}
-	allowedKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(allowedPublicKey))
-	if err != nil {
-		return fmt.Errorf("invalid allowed ssh public key: %w", err)
+	if len(allowedKeys) == 0 {
+		return errors.New("at least one allowed ssh public key is required")
 	}
 	if err := os.MkdirAll(filepath.Dir(hostKeyPath), 0o700); err != nil {
 		return fmt.Errorf("ssh host key directory error: %w", err)
@@ -67,7 +74,12 @@ func RunSSH(ctx context.Context, provider providers.Provider, cfg SSHConfig) err
 		wish.WithAddress(address),
 		wish.WithHostKeyPath(hostKeyPath),
 		wish.WithPublicKeyAuth(func(_ ssh.Context, candidate ssh.PublicKey) bool {
-			return ssh.KeysEqual(candidate, allowedKey)
+			for _, allowedKey := range allowedKeys {
+				if ssh.KeysEqual(candidate, allowedKey) {
+					return true
+				}
+			}
+			return false
 		}),
 		wish.WithPasswordAuth(func(_ ssh.Context, _ string) bool { return false }),
 		wish.WithKeyboardInteractiveAuth(func(_ ssh.Context, _ gossh.KeyboardInteractiveChallenge) bool { return false }),

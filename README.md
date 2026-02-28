@@ -8,8 +8,9 @@ official Go SDK.
 - `OPENAI_API_KEY=... go run . tui --render simple`
 - `OPENAI_API_KEY=... MATON_API_KEY=... go run . tui --render bubbletea`
 - `go run . tui --env-file .env --render simple`
-- `OPENAI_API_KEY=... go run . ssh`
-- `OPENAI_API_KEY=... TELEGRAM_API_KEY=... go run . channel_listener --channel telegram`
+- `go run . ssh --env-file .env`
+- `OPENAI_API_KEY=... SSH_ALLOWED_PUBLIC_KEYS="<key1>,<key2>" go run . ssh`
+- `OPENAI_API_KEY=... TELEGRAM_API_KEY=... TELEGRAM_ALLOWED_USERS="123,456" go run . channel_listener --channel telegram`
 - `go run . list_sessions`
 
 ## Usage
@@ -63,10 +64,9 @@ official Go SDK.
 - Additional runtime behavior:
   - interface mode is fixed to `bubbletea` (the `--render` flag is not accepted)
   - prints `SSH server listening on port <port>` at startup
-  - host key is persisted at `data/ssh/host_ed25519`
+  - host key is persisted at `data/.ssh/host_ed25519`
   - public-key auth only (password and keyboard-interactive auth are disabled)
-  - allows exactly one SSH public key:
-    - `ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local`
+  - allowed SSH public keys come from `SSH_ALLOWED_PUBLIC_KEYS` (comma-separated authorized keys)
 
 ### `channel_listener`
 
@@ -91,9 +91,6 @@ official Go SDK.
 - `-telegram-poll-timeout`
   - `getUpdates` long-poll timeout in seconds
   - default: `30`
-- `-telegram-allowed-users`
-  - comma-separated Telegram user IDs accepted in Telegram mode
-  - default: empty (deny all users)
 
 ### `list_sessions`
 
@@ -111,6 +108,8 @@ official Go SDK.
 
 - Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
 - When `-env-file` is set (or default `.env` exists), values in that file are checked before process environment variables.
+- Telegram allowlist is loaded from `TELEGRAM_ALLOWED_USERS` (comma-separated user IDs); empty means deny all.
+- SSH allowlist is loaded from `SSH_ALLOWED_PUBLIC_KEYS` (comma-separated authorized public keys); required for `ssh` command.
 - Tools always enabled in provider commands: `code_interpreter`, `web_search`, `get_time`.
 - Interactive modes (`tui`, `ssh`) enable filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
 - File tool paths are virtualized when `-fs-root` is set: `/` maps to the configured sandbox root on disk, and all resolved paths are still validated against the allowed prefix policy.

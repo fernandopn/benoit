@@ -21,6 +21,7 @@ import (
 	filetools "github.com/fernandopn/benoit/tools/files"
 	"github.com/fernandopn/benoit/tui"
 	"github.com/openai/openai-go/v3/shared"
+	gossh "golang.org/x/crypto/ssh"
 )
 
 type Command string
@@ -46,9 +47,11 @@ const (
 )
 
 type CredentialConfig struct {
-	OpenAIAPIKey     string
-	TelegramBotToken string
-	MatonAPIKey      string
+	OpenAIAPIKey            string
+	TelegramBotToken        string
+	MatonAPIKey             string
+	TelegramAllowedUserIDs  []int64
+	SSHAllowedPublicKeyList []string
 }
 
 type Config struct {
@@ -57,6 +60,7 @@ type Config struct {
 	Channel                    ChannelMode
 	SessionID                  string
 	SSHPort                    int
+	SSHAllowedPublicKeys       []string
 	EnvFilePath                string
 	Model                      string
 	Timeout                    time.Duration
@@ -76,16 +80,16 @@ const (
 	defaultRenderMode                 = string(RenderSimple)
 	defaultChannelMode                = string(ChannelTelegram)
 	defaultSSHPort                    = 23234
-	defaultSSHHostKeyPath             = "data/ssh/host_ed25519"
-	allowedSSHPublicKey               = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local"
+	defaultSSHHostKeyPath             = "data/.ssh/host_ed25519"
 	defaultEnvFilePath                = ".env"
 	defaultDBPath                     = "db.sqlite"
 	defaultTelegramPollTimeoutSeconds = 30
-	defaultTelegramAllowedUsers       = ""
 
-	openAIAPIKeyEnv   = "OPENAI_API_KEY"
-	telegramAPIKeyEnv = "TELEGRAM_API_KEY"
-	matonAPIKeyEnv    = "MATON_API_KEY"
+	openAIAPIKeyEnv         = "OPENAI_API_KEY"
+	telegramAPIKeyEnv       = "TELEGRAM_API_KEY"
+	matonAPIKeyEnv          = "MATON_API_KEY"
+	telegramAllowedUsersEnv = "TELEGRAM_ALLOWED_USERS"
+	sshAllowedPublicKeysEnv = "SSH_ALLOWED_PUBLIC_KEYS"
 )
 
 func main() {
@@ -116,6 +120,8 @@ func run() error {
 		return err
 	}
 	cfg.Credentials = creds
+	cfg.TelegramAllowedUserIDs = creds.TelegramAllowedUserIDs
+	cfg.SSHAllowedPublicKeys = creds.SSHAllowedPublicKeyList
 	cfg.OpenAIProviderParams = providers.OpenAIProviderParams{
 		ReasoningEffort:  openAIReasoningEffort,
 		ReasoningSummary: openAIReasoningSummary,
@@ -194,6 +200,9 @@ func validateConfig(cfg Config) error {
 		if cfg.Command == CommandSSH {
 			if cfg.Render != RenderBubbleTea {
 				return fmt.Errorf("flag error: ssh render mode is fixed to bubbletea")
+			}
+			if len(cfg.SSHAllowedPublicKeys) == 0 {
+				return fmt.Errorf("credential error: %s is not set", sshAllowedPublicKeysEnv)
 			}
 			if err := validateSSHPort(cfg.SSHPort); err != nil {
 				return err
@@ -360,12 +369,12 @@ func runSSHCommand(ctx context.Context, cfg Config, provider providers.Provider)
 	fmt.Printf("SSH server listening on port %d\n", port)
 
 	sshCfg := tui.SSHConfig{
-		Address:          address,
-		HostKeyPath:      defaultSSHHostKeyPath,
-		AllowedPublicKey: allowedSSHPublicKey,
-		Timeout:          cfg.Timeout,
-		UseSimple:        false,
-		SessionID:        strings.TrimSpace(cfg.SessionID),
+		Address:           address,
+		HostKeyPath:       defaultSSHHostKeyPath,
+		AllowedPublicKeys: cfg.SSHAllowedPublicKeys,
+		Timeout:           cfg.Timeout,
+		UseSimple:         false,
+		SessionID:         strings.TrimSpace(cfg.SessionID),
 	}
 	if err := tui.RunSSH(ctx, provider, sshCfg); err != nil {
 		return fmt.Errorf("ssh error: %w", err)
@@ -659,7 +668,6 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	shared := bindProviderFlags(flagSet, defaultRoot)
 	channelRaw := flagSet.String("channel", defaultChannelMode, "channel listener type: telegram")
 	telegramPollTimeoutSeconds := flagSet.Int("telegram-poll-timeout", defaultTelegramPollTimeoutSeconds, "telegram getUpdates long poll timeout in seconds")
-	telegramAllowedUsersRaw := flagSet.String("telegram-allowed-users", defaultTelegramAllowedUsers, "comma-separated Telegram user IDs allowed in telegram mode")
 	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
 	}
@@ -671,11 +679,6 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	if *telegramPollTimeoutSeconds < 0 {
 		return Config{}, fmt.Errorf("flag error: -telegram-poll-timeout cannot be negative")
 	}
-	allowedUsers, err := parseTelegramAllowedUsers(*telegramAllowedUsersRaw)
-	if err != nil {
-		return Config{}, fmt.Errorf("flag error: %w", err)
-	}
-
 	return Config{
 		Command:                    CommandChannelListener,
 		Channel:                    channel,
@@ -687,7 +690,6 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 		DBPath:                     strings.TrimSpace(*shared.storage.dbPath),
 		BypassCompressionBarrier:   *shared.bypassCompressionBarrier,
 		TelegramPollTimeoutSeconds: *telegramPollTimeoutSeconds,
-		TelegramAllowedUserIDs:     allowedUsers,
 	}, nil
 }
 
@@ -713,6 +715,25 @@ func loadCredentials(cfg Config, envFileValues map[string]string) (CredentialCon
 		MatonAPIKey:      lookupEnvValue(matonAPIKeyEnv, envFileValues),
 	}
 
+	if cfg.Command == CommandChannelListener {
+		allowedUsers, err := parseTelegramAllowedUsers(lookupEnvValue(telegramAllowedUsersEnv, envFileValues))
+		if err != nil {
+			return CredentialConfig{}, fmt.Errorf("invalid %s: %w", telegramAllowedUsersEnv, err)
+		}
+		creds.TelegramAllowedUserIDs = allowedUsers
+	}
+
+	if cfg.Command == CommandSSH {
+		allowedKeys, err := parseSSHAllowedPublicKeys(lookupEnvValue(sshAllowedPublicKeysEnv, envFileValues))
+		if err != nil {
+			return CredentialConfig{}, fmt.Errorf("invalid %s: %w", sshAllowedPublicKeysEnv, err)
+		}
+		if len(allowedKeys) == 0 {
+			return CredentialConfig{}, fmt.Errorf("%s is not set", sshAllowedPublicKeysEnv)
+		}
+		creds.SSHAllowedPublicKeyList = allowedKeys
+	}
+
 	if cfg.Command == CommandListSessions {
 		return creds, nil
 	}
@@ -728,6 +749,31 @@ func loadCredentials(cfg Config, envFileValues map[string]string) (CredentialCon
 	}
 
 	return creds, nil
+}
+
+func parseSSHAllowedPublicKeys(raw string) ([]string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	parts := strings.Split(raw, ",")
+	keys := make([]string, 0, len(parts))
+	seen := make(map[string]struct{}, len(parts))
+	for idx, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		if _, ok := seen[part]; ok {
+			continue
+		}
+		if _, _, _, _, err := gossh.ParseAuthorizedKey([]byte(part)); err != nil {
+			return nil, fmt.Errorf("invalid SSH public key at position %d", idx+1)
+		}
+		seen[part] = struct{}{}
+		keys = append(keys, part)
+	}
+	return keys, nil
 }
 
 func requiredEnv(name string, envFileValues map[string]string) (string, error) {

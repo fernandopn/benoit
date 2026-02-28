@@ -9,6 +9,8 @@ import (
 	"github.com/fernandopn/benoit/tools"
 )
 
+const testAllowedSSHPublicKey = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local"
+
 func TestLoadCredentials(t *testing.T) {
 	t.Run("openai required", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "")
@@ -24,6 +26,7 @@ func TestLoadCredentials(t *testing.T) {
 	t.Run("telegram required in telegram mode", func(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "openai-key")
 		t.Setenv(telegramAPIKeyEnv, "")
+		t.Setenv(telegramAllowedUsersEnv, "")
 		_, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, nil)
 		if err == nil {
 			t.Fatal("expected missing TELEGRAM_API_KEY error")
@@ -69,6 +72,7 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(openAIAPIKeyEnv, "  openai-key  ")
 		t.Setenv(telegramAPIKeyEnv, "  telegram-key  ")
 		t.Setenv(matonAPIKeyEnv, "  maton-key  ")
+		t.Setenv(telegramAllowedUsersEnv, "77, 99")
 		creds, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, nil)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
@@ -82,6 +86,9 @@ func TestLoadCredentials(t *testing.T) {
 		if creds.MatonAPIKey != "maton-key" {
 			t.Fatalf("unexpected Maton key: %q", creds.MatonAPIKey)
 		}
+		if len(creds.TelegramAllowedUserIDs) != 2 || creds.TelegramAllowedUserIDs[0] != 77 || creds.TelegramAllowedUserIDs[1] != 99 {
+			t.Fatalf("unexpected telegram allowed user IDs: %v", creds.TelegramAllowedUserIDs)
+		}
 	})
 
 	t.Run("env file values override process env", func(t *testing.T) {
@@ -90,9 +97,10 @@ func TestLoadCredentials(t *testing.T) {
 		t.Setenv(matonAPIKeyEnv, "maton-from-env")
 
 		envFileValues := map[string]string{
-			openAIAPIKeyEnv:   "openai-from-file",
-			telegramAPIKeyEnv: "telegram-from-file",
-			matonAPIKeyEnv:    "maton-from-file",
+			openAIAPIKeyEnv:         "openai-from-file",
+			telegramAPIKeyEnv:       "telegram-from-file",
+			matonAPIKeyEnv:          "maton-from-file",
+			telegramAllowedUsersEnv: "101,202",
 		}
 
 		creds, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, envFileValues)
@@ -107,6 +115,55 @@ func TestLoadCredentials(t *testing.T) {
 		}
 		if creds.MatonAPIKey != "maton-from-file" {
 			t.Fatalf("unexpected Maton key: %q", creds.MatonAPIKey)
+		}
+		if len(creds.TelegramAllowedUserIDs) != 2 || creds.TelegramAllowedUserIDs[0] != 101 || creds.TelegramAllowedUserIDs[1] != 202 {
+			t.Fatalf("unexpected telegram allowed user IDs: %v", creds.TelegramAllowedUserIDs)
+		}
+	})
+
+	t.Run("invalid telegram allowed users", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-key")
+		t.Setenv(telegramAPIKeyEnv, "telegram-key")
+		t.Setenv(telegramAllowedUsersEnv, "77,abc")
+
+		_, err := loadCredentials(Config{Command: CommandChannelListener, Channel: ChannelTelegram}, nil)
+		if err == nil {
+			t.Fatal("expected parse error")
+		}
+		if !strings.Contains(err.Error(), telegramAllowedUsersEnv) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("ssh requires allowed keys", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-key")
+		t.Setenv(sshAllowedPublicKeysEnv, "")
+
+		_, err := loadCredentials(Config{Command: CommandSSH}, nil)
+		if err == nil {
+			t.Fatal("expected missing ssh key list error")
+		}
+		if !strings.Contains(err.Error(), sshAllowedPublicKeysEnv) {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("ssh allowed keys loaded from env file", func(t *testing.T) {
+		t.Setenv(openAIAPIKeyEnv, "openai-from-env")
+		envFileValues := map[string]string{
+			openAIAPIKeyEnv:         "openai-from-file",
+			sshAllowedPublicKeysEnv: testAllowedSSHPublicKey,
+		}
+
+		creds, err := loadCredentials(Config{Command: CommandSSH}, envFileValues)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if creds.OpenAIAPIKey != "openai-from-file" {
+			t.Fatalf("unexpected OpenAI key: %q", creds.OpenAIAPIKey)
+		}
+		if len(creds.SSHAllowedPublicKeyList) != 1 {
+			t.Fatalf("unexpected ssh key list: %v", creds.SSHAllowedPublicKeyList)
 		}
 	})
 
@@ -144,6 +201,8 @@ func TestLoadDotEnvIfExists(t *testing.T) {
 			"OPENAI_API_KEY=openai-from-file",
 			"TELEGRAM_API_KEY=\"telegram from file\"",
 			"MATON_API_KEY='maton-from-file'",
+			"TELEGRAM_ALLOWED_USERS=11,22",
+			"SSH_ALLOWED_PUBLIC_KEYS='" + testAllowedSSHPublicKey + "'",
 			"export EXTRA=value",
 			"TRIMMED=value # trailing comment",
 			"",
@@ -164,6 +223,12 @@ func TestLoadDotEnvIfExists(t *testing.T) {
 		}
 		if values[matonAPIKeyEnv] != "maton-from-file" {
 			t.Fatalf("unexpected Maton value: %q", values[matonAPIKeyEnv])
+		}
+		if values[telegramAllowedUsersEnv] != "11,22" {
+			t.Fatalf("unexpected telegram allowed users value: %q", values[telegramAllowedUsersEnv])
+		}
+		if values[sshAllowedPublicKeysEnv] != testAllowedSSHPublicKey {
+			t.Fatalf("unexpected ssh allowed keys value: %q", values[sshAllowedPublicKeysEnv])
 		}
 		if values["EXTRA"] != "value" {
 			t.Fatalf("unexpected EXTRA value: %q", values["EXTRA"])
@@ -276,6 +341,36 @@ func TestParseTelegramAllowedUsers(t *testing.T) {
 
 	t.Run("invalid id", func(t *testing.T) {
 		_, err := parseTelegramAllowedUsers("77,abc")
+		if err == nil {
+			t.Fatal("expected parse error")
+		}
+	})
+}
+
+func TestParseSSHAllowedPublicKeys(t *testing.T) {
+	t.Run("empty", func(t *testing.T) {
+		keys, err := parseSSHAllowedPublicKeys("  ")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(keys) != 0 {
+			t.Fatalf("expected no keys, got %v", keys)
+		}
+	})
+
+	t.Run("valid and deduplicated", func(t *testing.T) {
+		raw := testAllowedSSHPublicKey + ", " + testAllowedSSHPublicKey
+		keys, err := parseSSHAllowedPublicKeys(raw)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(keys) != 1 {
+			t.Fatalf("unexpected key count: %v", keys)
+		}
+	})
+
+	t.Run("invalid key", func(t *testing.T) {
+		_, err := parseSSHAllowedPublicKeys("bad-key")
 		if err == nil {
 			t.Fatal("expected parse error")
 		}
@@ -716,10 +811,11 @@ func TestValidateConfigSessionID(t *testing.T) {
 
 func TestValidateConfigSessionIDSSH(t *testing.T) {
 	cfg := Config{
-		Command: CommandSSH,
-		Render:  RenderBubbleTea,
-		SSHPort: defaultSSHPort,
-		Model:   "gpt-5.2",
+		Command:              CommandSSH,
+		Render:               RenderBubbleTea,
+		SSHPort:              defaultSSHPort,
+		SSHAllowedPublicKeys: []string{testAllowedSSHPublicKey},
+		Model:                "gpt-5.2",
 		Credentials: CredentialConfig{
 			OpenAIAPIKey: "key",
 		},
@@ -764,6 +860,20 @@ func TestValidateConfigSessionIDSSH(t *testing.T) {
 			t.Fatal("expected validation error")
 		}
 		if !strings.Contains(err.Error(), "bubbletea") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("missing ssh allowed keys", func(t *testing.T) {
+		cfg.SessionID = "session-1"
+		cfg.Render = RenderBubbleTea
+		cfg.SSHPort = defaultSSHPort
+		cfg.SSHAllowedPublicKeys = nil
+		err := validateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), sshAllowedPublicKeysEnv) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
