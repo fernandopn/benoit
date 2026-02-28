@@ -30,19 +30,13 @@ func ChannelMessageDisplayName(message channels.ChannelMessage) string {
 }
 
 func FormatTelegramIncomingHeader(message channels.ChannelMessage) string {
-	if message.UserID == 0 {
-		return "unknown sender"
+	name := strings.TrimSpace(ChannelMessageDisplayName(message))
+	if name == "" {
+		name = strings.TrimSpace(ChannelMessageUsername(message))
+	}
+	if name == "" {
+		name = "unknown"
 	}
 
-	header := fmt.Sprintf("user:%d", message.UserID)
-	username := ChannelMessageUsername(message)
-	displayName := ChannelMessageDisplayName(message)
-	if username != "" {
-		header += fmt.Sprintf(" <%s>", username)
-	}
-	if displayName != "" {
-		header += fmt.Sprintf(" (%s)", displayName)
-	}
-
-	return header
+	return fmt.Sprintf("%s (telegram:%d)", name, message.UserID)
 }

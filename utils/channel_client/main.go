@@ -253,7 +253,7 @@ func (s *interactiveSession) handleIncomingMessage(message channels.ChannelMessa
 
 	s.chat.addRecipient(message.UserID, username, displayName)
 	debugLine(s.writer, s.colors, s.verbose, "recipient list=%v current=%d", s.chat.recipients, s.chat.currentRecipient())
-	printIncomingMessage(s.writer, s.colors, s.chat.recipientDisplay(message.UserID), text)
+	printIncomingMessage(s.writer, s.colors, simpleui.FormatTelegramIncomingHeader(message), text)
 	renderPrompt(s.writer, s.colors, s.chat)
 
 	return nil

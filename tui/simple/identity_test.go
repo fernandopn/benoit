@@ -15,7 +15,7 @@ func TestFormatTelegramIncomingHeader(t *testing.T) {
 		},
 	}
 
-	if got := FormatTelegramIncomingHeader(message); got != "user:8230557735 <telegram_user> (Telegram User)" {
+	if got := FormatTelegramIncomingHeader(message); got != "Telegram User (telegram:8230557735)" {
 		t.Fatalf("unexpected header: %q", got)
 	}
 }
@@ -28,7 +28,20 @@ func TestFormatTelegramIncomingHeaderWithoutUsername(t *testing.T) {
 		},
 	}
 
-	if got := FormatTelegramIncomingHeader(message); got != "user:8230557735 (Telegram User)" {
+	if got := FormatTelegramIncomingHeader(message); got != "Telegram User (telegram:8230557735)" {
+		t.Fatalf("unexpected header: %q", got)
+	}
+}
+
+func TestFormatTelegramIncomingHeaderWithoutDisplayName(t *testing.T) {
+	message := channels.ChannelMessage{
+		UserID: 8230557735,
+		Params: map[string]string{
+			channels.ParamUsername: "telegram_user",
+		},
+	}
+
+	if got := FormatTelegramIncomingHeader(message); got != "telegram_user (telegram:8230557735)" {
 		t.Fatalf("unexpected header: %q", got)
 	}
 }

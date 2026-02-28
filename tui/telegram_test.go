@@ -369,7 +369,7 @@ func TestFormatTelegramIncomingHeader(t *testing.T) {
 		},
 	}
 
-	if got := formatTelegramIncomingHeader(message); got != "user:8230557735 <telegram_user> (Telegram User)" {
+	if got := formatTelegramIncomingHeader(message); got != "Telegram User (telegram:8230557735)" {
 		t.Fatalf("unexpected header: %q", got)
 	}
 }
@@ -382,7 +382,7 @@ func TestFormatTelegramIncomingHeaderWithoutUsername(t *testing.T) {
 		},
 	}
 
-	if got := formatTelegramIncomingHeader(message); got != "user:8230557735 (Telegram User)" {
+	if got := formatTelegramIncomingHeader(message); got != "Telegram User (telegram:8230557735)" {
 		t.Fatalf("unexpected header without username: %q", got)
 	}
 }
