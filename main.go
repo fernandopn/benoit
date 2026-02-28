@@ -27,6 +27,7 @@ type Command string
 
 const (
 	CommandTUI             Command = "tui"
+	CommandSSH             Command = "ssh"
 	CommandListSessions    Command = "list_sessions"
 	CommandChannelListener Command = "channel_listener"
 )
@@ -72,6 +73,9 @@ const (
 	openAIReasoningSummary            = shared.ReasoningSummaryDetailed
 	defaultRenderMode                 = string(RenderSimple)
 	defaultChannelMode                = string(ChannelTelegram)
+	defaultSSHListenAddress           = ":23234"
+	defaultSSHHostKeyPath             = "data/ssh/host_ed25519"
+	allowedSSHPublicKey               = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local"
 	defaultDBPath                     = "db.sqlite"
 	defaultTelegramPollTimeoutSeconds = 30
 	defaultTelegramAllowedUsers       = ""
@@ -164,7 +168,7 @@ func validateConfig(cfg Config) error {
 	}
 
 	switch cfg.Command {
-	case CommandTUI:
+	case CommandTUI, CommandSSH:
 		if err := validateProviderCommandConfig(cfg); err != nil {
 			return err
 		}
@@ -312,6 +316,8 @@ func runCommand(ctx context.Context, cfg Config, provider providers.Provider) er
 	switch cfg.Command {
 	case CommandTUI:
 		return runTUICommand(ctx, cfg, provider)
+	case CommandSSH:
+		return runSSHCommand(ctx, cfg, provider)
 	case CommandChannelListener:
 		return runChannelListenerCommand(ctx, cfg, provider)
 	default:
@@ -323,6 +329,22 @@ func runTUICommand(ctx context.Context, cfg Config, provider providers.Provider)
 	useSimpleMode := cfg.Render == RenderSimple
 	if err := tui.Run(ctx, provider, cfg.Timeout, useSimpleMode, strings.TrimSpace(cfg.SessionID)); err != nil {
 		return fmt.Errorf("tui error: %w", err)
+	}
+	return nil
+}
+
+func runSSHCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
+	useSimpleMode := cfg.Render == RenderSimple
+	sshCfg := tui.SSHConfig{
+		Address:          defaultSSHListenAddress,
+		HostKeyPath:      defaultSSHHostKeyPath,
+		AllowedPublicKey: allowedSSHPublicKey,
+		Timeout:          cfg.Timeout,
+		UseSimple:        useSimpleMode,
+		SessionID:        strings.TrimSpace(cfg.SessionID),
+	}
+	if err := tui.RunSSH(ctx, provider, sshCfg); err != nil {
+		return fmt.Errorf("ssh error: %w", err)
 	}
 	return nil
 }
@@ -459,7 +481,7 @@ func selectedTools(cfg Config) ([]tools.Tool, error) {
 }
 
 func configuredFileTools(cfg Config) ([]tools.Tool, error) {
-	if cfg.Command != CommandTUI || !cfg.FSRootProvided {
+	if !isInteractiveCommand(cfg.Command) || !cfg.FSRootProvided {
 		return nil, nil
 	}
 	return filetools.NewToolSet(cfg.FSRoot)
@@ -467,7 +489,7 @@ func configuredFileTools(cfg Config) ([]tools.Tool, error) {
 
 func configuredToolChannelBindings(cfg Config) ([]tools.ChannelBinding, error) {
 	bindings := make([]tools.ChannelBinding, 0, 1)
-	if cfg.Command != CommandTUI {
+	if !isInteractiveCommand(cfg.Command) {
 		return bindings, nil
 	}
 	telegramBotToken := strings.TrimSpace(cfg.Credentials.TelegramBotToken)
@@ -484,7 +506,7 @@ func configuredToolChannelBindings(cfg Config) ([]tools.ChannelBinding, error) {
 
 func loadConfig(defaultRoot string, args []string) (Config, error) {
 	if len(args) == 0 {
-		return Config{}, fmt.Errorf("flag error: command is required (use tui, list_sessions, or channel_listener)")
+		return Config{}, fmt.Errorf("flag error: command is required (use tui, ssh, list_sessions, or channel_listener)")
 	}
 
 	command := Command(strings.ToLower(strings.TrimSpace(args[0])))
@@ -493,12 +515,14 @@ func loadConfig(defaultRoot string, args []string) (Config, error) {
 	switch command {
 	case CommandTUI:
 		return loadTUIConfig(defaultRoot, commandArgs)
+	case CommandSSH:
+		return loadSSHConfig(defaultRoot, commandArgs)
 	case CommandListSessions:
 		return loadListSessionsConfig(defaultRoot, commandArgs)
 	case CommandChannelListener:
 		return loadChannelListenerConfig(defaultRoot, commandArgs)
 	default:
-		return Config{}, fmt.Errorf("flag error: invalid command %q (use tui, list_sessions, or channel_listener)", args[0])
+		return Config{}, fmt.Errorf("flag error: invalid command %q (use tui, ssh, list_sessions, or channel_listener)", args[0])
 	}
 }
 
@@ -552,7 +576,18 @@ func flagIsSet(flagSet *flag.FlagSet, name string) bool {
 }
 
 func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
-	flagSet := flag.NewFlagSet(string(CommandTUI), flag.ContinueOnError)
+	return loadInteractiveConfig(CommandTUI, defaultRoot, args)
+}
+
+func loadSSHConfig(defaultRoot string, args []string) (Config, error) {
+	return loadInteractiveConfig(CommandSSH, defaultRoot, args)
+}
+
+func loadInteractiveConfig(command Command, defaultRoot string, args []string) (Config, error) {
+	if !isInteractiveCommand(command) {
+		return Config{}, fmt.Errorf("flag error: unsupported interactive command %q", command)
+	}
+	flagSet := flag.NewFlagSet(string(command), flag.ContinueOnError)
 	shared := bindProviderFlags(flagSet, defaultRoot)
 	renderRaw := flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
 	sessionID := flagSet.String("session-id", "", "resume an existing session ID")
@@ -565,7 +600,7 @@ func loadTUIConfig(defaultRoot string, args []string) (Config, error) {
 		return Config{}, fmt.Errorf("flag error: %w", err)
 	}
 	return Config{
-		Command:                  CommandTUI,
+		Command:                  command,
 		Render:                   renderMode,
 		SessionID:                strings.TrimSpace(*sessionID),
 		Model:                    strings.TrimSpace(*shared.model),
@@ -706,4 +741,8 @@ func parseTelegramAllowedUsers(raw string) ([]int64, error) {
 		allowed = append(allowed, id)
 	}
 	return allowed, nil
+}
+
+func isInteractiveCommand(command Command) bool {
+	return command == CommandTUI || command == CommandSSH
 }

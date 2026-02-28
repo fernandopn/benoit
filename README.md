@@ -7,6 +7,7 @@ official Go SDK.
 
 - `OPENAI_API_KEY=... go run . tui --render simple`
 - `OPENAI_API_KEY=... MATON_API_KEY=... go run . tui --render bubbletea`
+- `OPENAI_API_KEY=... go run . ssh --render bubbletea`
 - `OPENAI_API_KEY=... TELEGRAM_API_KEY=... go run . channel_listener --channel telegram`
 - `go run . list_sessions`
 
@@ -40,6 +41,23 @@ official Go SDK.
   - default: `simple`
 - `--session-id`
   - resume an existing session ID
+
+### `ssh`
+
+- Same flags and defaults as `tui`:
+  - `-model` (default: `gpt-5.2`)
+  - `-timeout` request timeout (for example: `45s`, `2m`) (default: `20m`)
+  - `-fs-root` filesystem sandbox root for file tools; if omitted, file tools are not registered (default: current working directory)
+  - `-db-path` database path used for provider trace logging and per-session state (default: `db.sqlite`)
+  - `-bypass-compression-barrier` disable compression barrier middleware (default: `false`)
+  - `--render` interface mode (`simple` or `bubbletea`) (default: `simple`)
+  - `--session-id` resume an existing session ID
+- Additional runtime behavior:
+  - listens on `:23234`
+  - host key is persisted at `data/ssh/host_ed25519`
+  - public-key auth only (password and keyboard-interactive auth are disabled)
+  - allows exactly one SSH public key:
+    - `ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local`
 
 ### `channel_listener`
 
@@ -78,11 +96,11 @@ official Go SDK.
 
 - Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
 - Tools always enabled in provider commands: `code_interpreter`, `web_search`, `get_time`.
-- TUI mode enables filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
+- Interactive modes (`tui`, `ssh`) enable filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
 - File tool paths are virtualized when `-fs-root` is set: `/` maps to the configured sandbox root on disk, and all resolved paths are still validated against the allowed prefix policy.
 - In sandbox mode, do not assume `/mnt/data` exists; discover available roots with `glob` using `path: "/"` and `pattern: "*"`.
 - `write` creates parent directories automatically when the target path is inside missing directories within the sandbox.
-- `send_channel_message` is enabled only in `tui` mode when `TELEGRAM_API_KEY` is set. It accepts `channel`, `user_id`, and `message`.
+- `send_channel_message` is enabled in interactive modes (`tui`, `ssh`) when `TELEGRAM_API_KEY` is set. It accepts `channel`, `user_id`, and `message`.
 - `maton_gcalendar` and `maton_gmail` are enabled only when `MATON_API_KEY` is set.
 - `maton_gcalendar` `list_events` requires `query.timeMin` and `query.timeMax` (RFC3339) to keep event queries bounded.
 - When no TTY is detected for stdin/stdout, the app automatically uses

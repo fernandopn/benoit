@@ -190,6 +190,16 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		}
 	})
 
+	t.Run("ssh", func(t *testing.T) {
+		cfg, err := loadSSHConfig(root, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if cfg.DBPath != defaultDBPath {
+			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
+		}
+	})
+
 	t.Run("channel_listener", func(t *testing.T) {
 		cfg, err := loadChannelListenerConfig(root, nil)
 		if err != nil {
@@ -214,6 +224,51 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 	})
 }
 
+func TestLoadSSHConfigMatchesTUIFlags(t *testing.T) {
+	args := []string{
+		"-render", "bubbletea",
+		"-session-id", "session-123",
+		"-model", "gpt-5.2-codex",
+		"-timeout", "30s",
+		"-fs-root", "/tmp/custom",
+		"-db-path", "custom.sqlite",
+		"-bypass-compression-barrier",
+	}
+	tuiCfg, err := loadTUIConfig("/tmp/benoit", args)
+	if err != nil {
+		t.Fatalf("unexpected tui error: %v", err)
+	}
+	sshCfg, err := loadSSHConfig("/tmp/benoit", args)
+	if err != nil {
+		t.Fatalf("unexpected ssh error: %v", err)
+	}
+
+	if tuiCfg.Render != sshCfg.Render {
+		t.Fatalf("render mismatch: tui=%v ssh=%v", tuiCfg.Render, sshCfg.Render)
+	}
+	if tuiCfg.SessionID != sshCfg.SessionID {
+		t.Fatalf("session id mismatch: tui=%q ssh=%q", tuiCfg.SessionID, sshCfg.SessionID)
+	}
+	if tuiCfg.Model != sshCfg.Model {
+		t.Fatalf("model mismatch: tui=%q ssh=%q", tuiCfg.Model, sshCfg.Model)
+	}
+	if tuiCfg.Timeout != sshCfg.Timeout {
+		t.Fatalf("timeout mismatch: tui=%v ssh=%v", tuiCfg.Timeout, sshCfg.Timeout)
+	}
+	if tuiCfg.FSRoot != sshCfg.FSRoot {
+		t.Fatalf("fs root mismatch: tui=%q ssh=%q", tuiCfg.FSRoot, sshCfg.FSRoot)
+	}
+	if tuiCfg.FSRootProvided != sshCfg.FSRootProvided {
+		t.Fatalf("fs root provided mismatch: tui=%v ssh=%v", tuiCfg.FSRootProvided, sshCfg.FSRootProvided)
+	}
+	if tuiCfg.DBPath != sshCfg.DBPath {
+		t.Fatalf("db path mismatch: tui=%q ssh=%q", tuiCfg.DBPath, sshCfg.DBPath)
+	}
+	if tuiCfg.BypassCompressionBarrier != sshCfg.BypassCompressionBarrier {
+		t.Fatalf("bypass compression mismatch: tui=%v ssh=%v", tuiCfg.BypassCompressionBarrier, sshCfg.BypassCompressionBarrier)
+	}
+}
+
 func TestLoadTUIConfigSessionIDFlag(t *testing.T) {
 	cfg, err := loadTUIConfig("/tmp/benoit", []string{"-session-id", "session-123"})
 	if err != nil {
@@ -221,6 +276,19 @@ func TestLoadTUIConfigSessionIDFlag(t *testing.T) {
 	}
 	if cfg.SessionID != "session-123" {
 		t.Fatalf("unexpected session id: %q", cfg.SessionID)
+	}
+}
+
+func TestLoadConfigSSHCommand(t *testing.T) {
+	cfg, err := loadConfig("/tmp/benoit", []string{"ssh"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Command != CommandSSH {
+		t.Fatalf("unexpected command: %q", cfg.Command)
+	}
+	if cfg.Render != RenderSimple {
+		t.Fatalf("unexpected default render: %q", cfg.Render)
 	}
 }
 
@@ -269,8 +337,42 @@ func TestSelectedTools(t *testing.T) {
 		}
 	})
 
+	t.Run("ssh without fs root", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandSSH})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
 	t.Run("with fs root", func(t *testing.T) {
 		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("ssh with fs root", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandSSH, FSRoot: fsRoot, FSRootProvided: true})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -305,6 +407,23 @@ func TestSelectedTools(t *testing.T) {
 
 	t.Run("with telegram", func(t *testing.T) {
 		toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		names := toolNames(toolSet)
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch", "send_channel_message"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("with telegram on ssh", func(t *testing.T) {
+		toolSet, err := selectedTools(Config{Command: CommandSSH, FSRoot: fsRoot, FSRootProvided: true, Credentials: CredentialConfig{TelegramBotToken: "telegram-key"}})
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -360,6 +479,13 @@ func TestSelectedTools(t *testing.T) {
 			t.Fatal("expected fs root validation error")
 		}
 	})
+
+	t.Run("ssh requires fs root when flag is provided", func(t *testing.T) {
+		_, err := selectedTools(Config{Command: CommandSSH, FSRootProvided: true, FSRoot: "  "})
+		if err == nil {
+			t.Fatal("expected fs root validation error")
+		}
+	})
 }
 
 func TestValidateConfigSessionID(t *testing.T) {
@@ -399,6 +525,35 @@ func TestValidateConfigSessionID(t *testing.T) {
 			t.Fatal("expected validation error")
 		}
 		if !strings.Contains(err.Error(), "-fs-root") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+}
+
+func TestValidateConfigSessionIDSSH(t *testing.T) {
+	cfg := Config{
+		Command: CommandSSH,
+		Render:  RenderSimple,
+		Model:   "gpt-5.2",
+		Credentials: CredentialConfig{
+			OpenAIAPIKey: "key",
+		},
+	}
+
+	t.Run("valid session id", func(t *testing.T) {
+		cfg.SessionID = "session-1"
+		if err := validateConfig(cfg); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid session id", func(t *testing.T) {
+		cfg.SessionID = "bad\nline"
+		err := validateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), "-session-id") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
