@@ -198,6 +198,9 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 		if cfg.DBPath != defaultDBPath {
 			t.Fatalf("unexpected default db path: %q", cfg.DBPath)
 		}
+		if cfg.SSHPort != defaultSSHPort {
+			t.Fatalf("unexpected default ssh port: %d", cfg.SSHPort)
+		}
 	})
 
 	t.Run("channel_listener", func(t *testing.T) {
@@ -224,9 +227,8 @@ func TestLoadConfigDefaultsDBPath(t *testing.T) {
 	})
 }
 
-func TestLoadSSHConfigMatchesTUIFlags(t *testing.T) {
+func TestLoadSSHConfigMatchesTUISharedFlags(t *testing.T) {
 	args := []string{
-		"-render", "bubbletea",
 		"-session-id", "session-123",
 		"-model", "gpt-5.2-codex",
 		"-timeout", "30s",
@@ -243,8 +245,8 @@ func TestLoadSSHConfigMatchesTUIFlags(t *testing.T) {
 		t.Fatalf("unexpected ssh error: %v", err)
 	}
 
-	if tuiCfg.Render != sshCfg.Render {
-		t.Fatalf("render mismatch: tui=%v ssh=%v", tuiCfg.Render, sshCfg.Render)
+	if sshCfg.Render != RenderBubbleTea {
+		t.Fatalf("unexpected ssh render mode: %q", sshCfg.Render)
 	}
 	if tuiCfg.SessionID != sshCfg.SessionID {
 		t.Fatalf("session id mismatch: tui=%q ssh=%q", tuiCfg.SessionID, sshCfg.SessionID)
@@ -287,8 +289,28 @@ func TestLoadConfigSSHCommand(t *testing.T) {
 	if cfg.Command != CommandSSH {
 		t.Fatalf("unexpected command: %q", cfg.Command)
 	}
-	if cfg.Render != RenderSimple {
+	if cfg.Render != RenderBubbleTea {
 		t.Fatalf("unexpected default render: %q", cfg.Render)
+	}
+	if cfg.SSHPort != defaultSSHPort {
+		t.Fatalf("unexpected default ssh port: %d", cfg.SSHPort)
+	}
+}
+
+func TestLoadSSHConfigRejectsRenderFlag(t *testing.T) {
+	_, err := loadSSHConfig("/tmp/benoit", []string{"-render", "simple"})
+	if err == nil {
+		t.Fatal("expected unknown render flag error")
+	}
+}
+
+func TestLoadSSHConfigPortFlag(t *testing.T) {
+	cfg, err := loadSSHConfig("/tmp/benoit", []string{"-ssh-port", "2200"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.SSHPort != 2200 {
+		t.Fatalf("unexpected ssh port: %d", cfg.SSHPort)
 	}
 }
 
@@ -533,7 +555,8 @@ func TestValidateConfigSessionID(t *testing.T) {
 func TestValidateConfigSessionIDSSH(t *testing.T) {
 	cfg := Config{
 		Command: CommandSSH,
-		Render:  RenderSimple,
+		Render:  RenderBubbleTea,
+		SSHPort: defaultSSHPort,
 		Model:   "gpt-5.2",
 		Credentials: CredentialConfig{
 			OpenAIAPIKey: "key",
@@ -554,6 +577,31 @@ func TestValidateConfigSessionIDSSH(t *testing.T) {
 			t.Fatal("expected validation error")
 		}
 		if !strings.Contains(err.Error(), "-session-id") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid ssh port", func(t *testing.T) {
+		cfg.SessionID = "session-1"
+		cfg.SSHPort = 0
+		err := validateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), "-ssh-port") {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("invalid ssh render mode", func(t *testing.T) {
+		cfg.SessionID = "session-1"
+		cfg.SSHPort = defaultSSHPort
+		cfg.Render = RenderSimple
+		err := validateConfig(cfg)
+		if err == nil {
+			t.Fatal("expected validation error")
+		}
+		if !strings.Contains(err.Error(), "bubbletea") {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})

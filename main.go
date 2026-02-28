@@ -56,6 +56,7 @@ type Config struct {
 	Render                     RenderMode
 	Channel                    ChannelMode
 	SessionID                  string
+	SSHPort                    int
 	Model                      string
 	Timeout                    time.Duration
 	FSRoot                     string
@@ -73,7 +74,7 @@ const (
 	openAIReasoningSummary            = shared.ReasoningSummaryDetailed
 	defaultRenderMode                 = string(RenderSimple)
 	defaultChannelMode                = string(ChannelTelegram)
-	defaultSSHListenAddress           = ":23234"
+	defaultSSHPort                    = 23234
 	defaultSSHHostKeyPath             = "data/ssh/host_ed25519"
 	allowedSSHPublicKey               = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local"
 	defaultDBPath                     = "db.sqlite"
@@ -175,11 +176,21 @@ func validateConfig(cfg Config) error {
 		if cfg.FSRootProvided && strings.TrimSpace(cfg.FSRoot) == "" {
 			return fmt.Errorf("flag error: -fs-root cannot be empty")
 		}
-		if cfg.Render != RenderSimple && cfg.Render != RenderBubbleTea {
-			return fmt.Errorf("flag error: invalid render mode %q", cfg.Render)
-		}
 		if err := session.ValidateSessionID(cfg.SessionID); err != nil {
 			return fmt.Errorf("flag error: invalid -session-id: %w", err)
+		}
+		if cfg.Command == CommandTUI {
+			if cfg.Render != RenderSimple && cfg.Render != RenderBubbleTea {
+				return fmt.Errorf("flag error: invalid render mode %q", cfg.Render)
+			}
+		}
+		if cfg.Command == CommandSSH {
+			if cfg.Render != RenderBubbleTea {
+				return fmt.Errorf("flag error: ssh render mode is fixed to bubbletea")
+			}
+			if err := validateSSHPort(cfg.SSHPort); err != nil {
+				return err
+			}
 		}
 		return nil
 	case CommandChannelListener:
@@ -334,13 +345,19 @@ func runTUICommand(ctx context.Context, cfg Config, provider providers.Provider)
 }
 
 func runSSHCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
-	useSimpleMode := cfg.Render == RenderSimple
+	port := cfg.SSHPort
+	if port == 0 {
+		port = defaultSSHPort
+	}
+	address := fmt.Sprintf(":%d", port)
+	fmt.Printf("SSH server listening on port %d\n", port)
+
 	sshCfg := tui.SSHConfig{
-		Address:          defaultSSHListenAddress,
+		Address:          address,
 		HostKeyPath:      defaultSSHHostKeyPath,
 		AllowedPublicKey: allowedSSHPublicKey,
 		Timeout:          cfg.Timeout,
-		UseSimple:        useSimpleMode,
+		UseSimple:        false,
 		SessionID:        strings.TrimSpace(cfg.SessionID),
 	}
 	if err := tui.RunSSH(ctx, provider, sshCfg); err != nil {
@@ -589,17 +606,28 @@ func loadInteractiveConfig(command Command, defaultRoot string, args []string) (
 	}
 	flagSet := flag.NewFlagSet(string(command), flag.ContinueOnError)
 	shared := bindProviderFlags(flagSet, defaultRoot)
-	renderRaw := flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
+	var renderRaw *string
+	if command == CommandTUI {
+		renderRaw = flagSet.String("render", defaultRenderMode, "render mode: simple or bubbletea")
+	}
 	sessionID := flagSet.String("session-id", "", "resume an existing session ID")
+	var sshPort *int
+	if command == CommandSSH {
+		sshPort = flagSet.Int("ssh-port", defaultSSHPort, "ssh listen port")
+	}
 	if err := parseFlagSet(flagSet, args); err != nil {
 		return Config{}, err
 	}
 	fsRootProvided := flagIsSet(flagSet, "fs-root")
-	renderMode, err := parseRenderMode(*renderRaw)
-	if err != nil {
-		return Config{}, fmt.Errorf("flag error: %w", err)
+	renderMode := RenderBubbleTea
+	if renderRaw != nil {
+		parsedRenderMode, err := parseRenderMode(*renderRaw)
+		if err != nil {
+			return Config{}, fmt.Errorf("flag error: %w", err)
+		}
+		renderMode = parsedRenderMode
 	}
-	return Config{
+	cfg := Config{
 		Command:                  command,
 		Render:                   renderMode,
 		SessionID:                strings.TrimSpace(*sessionID),
@@ -609,7 +637,11 @@ func loadInteractiveConfig(command Command, defaultRoot string, args []string) (
 		FSRootProvided:           fsRootProvided,
 		DBPath:                   strings.TrimSpace(*shared.storage.dbPath),
 		BypassCompressionBarrier: *shared.bypassCompressionBarrier,
-	}, nil
+	}
+	if sshPort != nil {
+		cfg.SSHPort = *sshPort
+	}
+	return cfg, nil
 }
 
 func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error) {
@@ -741,6 +773,13 @@ func parseTelegramAllowedUsers(raw string) ([]int64, error) {
 		allowed = append(allowed, id)
 	}
 	return allowed, nil
+}
+
+func validateSSHPort(port int) error {
+	if port < 1 || port > 65535 {
+		return fmt.Errorf("flag error: -ssh-port must be between 1 and 65535")
+	}
+	return nil
 }
 
 func isInteractiveCommand(command Command) bool {

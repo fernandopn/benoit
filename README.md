@@ -7,7 +7,7 @@ official Go SDK.
 
 - `OPENAI_API_KEY=... go run . tui --render simple`
 - `OPENAI_API_KEY=... MATON_API_KEY=... go run . tui --render bubbletea`
-- `OPENAI_API_KEY=... go run . ssh --render bubbletea`
+- `OPENAI_API_KEY=... go run . ssh`
 - `OPENAI_API_KEY=... TELEGRAM_API_KEY=... go run . channel_listener --channel telegram`
 - `go run . list_sessions`
 
@@ -44,16 +44,18 @@ official Go SDK.
 
 ### `ssh`
 
-- Same flags and defaults as `tui`:
+- Same core provider flags as `tui`:
   - `-model` (default: `gpt-5.2`)
   - `-timeout` request timeout (for example: `45s`, `2m`) (default: `20m`)
   - `-fs-root` filesystem sandbox root for file tools; if omitted, file tools are not registered (default: current working directory)
   - `-db-path` database path used for provider trace logging and per-session state (default: `db.sqlite`)
   - `-bypass-compression-barrier` disable compression barrier middleware (default: `false`)
-  - `--render` interface mode (`simple` or `bubbletea`) (default: `simple`)
   - `--session-id` resume an existing session ID
+- SSH-specific flag:
+  - `-ssh-port` listen port for the SSH server (default: `23234`)
 - Additional runtime behavior:
-  - listens on `:23234`
+  - interface mode is fixed to `bubbletea` (the `--render` flag is not accepted)
+  - prints `SSH server listening on port <port>` at startup
   - host key is persisted at `data/ssh/host_ed25519`
   - public-key auth only (password and keyboard-interactive auth are disabled)
   - allows exactly one SSH public key:
@@ -68,7 +70,7 @@ official Go SDK.
 - `-timeout` request timeout (for example: `45s`, `2m`)
   - default: `20m`
 - `-fs-root`
-  - reserved for shared config; filesystem tools are enabled only in `tui`
+  - reserved for shared config; filesystem tools are enabled only in interactive modes (`tui`, `ssh`)
   - default: current working directory
 - `-db-path`
   - database path used for both provider trace logging and per-session provider state
