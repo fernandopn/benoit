@@ -368,8 +368,8 @@ func buildOpenAIProvider(_ context.Context, model string, apiKey string, params 
 	return provider, nil, nil
 }
 
-func buildOpenRouterProvider(_ context.Context, model string, apiKey string, params providers.OpenAIProviderParams, toolSet []tools.Tool) (providers.Provider, func() error, error) {
-	provider, err := providers.NewOpenRouter(model, apiKey, params, toolSet)
+func buildOpenRouterProvider(ctx context.Context, model string, apiKey string, params providers.OpenAIProviderParams, toolSet []tools.Tool) (providers.Provider, func() error, error) {
+	provider, err := providers.NewOpenRouter(ctx, model, apiKey, params, toolSet)
 	if err != nil {
 		return nil, nil, err
 	}

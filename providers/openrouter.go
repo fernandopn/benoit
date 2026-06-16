@@ -35,6 +35,9 @@ type chatCompletionStream interface {
 
 type chatCompletionsClient interface {
 	ListModels(ctx context.Context) ([]string, error)
+	// ModelContextLength returns the context window (in tokens) for the model,
+	// or 0 when it cannot be determined.
+	ModelContextLength(ctx context.Context, model string) (int64, error)
 	NewStreamingChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams) chatCompletionStream
 }
 
@@ -63,8 +66,42 @@ func (a *openRouterClientAdapter) ListModels(ctx context.Context) ([]string, err
 	return models, nil
 }
 
+func (a *openRouterClientAdapter) ModelContextLength(ctx context.Context, model string) (int64, error) {
+	page, err := a.client.Models.List(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, entry := range page.Data {
+		if entry.ID == model {
+			return contextLengthFromModelJSON(entry.RawJSON()), nil
+		}
+	}
+	return 0, nil
+}
+
 func (a *openRouterClientAdapter) NewStreamingChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams) chatCompletionStream {
 	return a.client.Chat.Completions.NewStreaming(ctx, params)
+}
+
+// contextLengthFromModelJSON reads the context window from an OpenRouter model
+// entry. OpenRouter exposes context_length at the root and under top_provider.
+func contextLengthFromModelJSON(raw string) int64 {
+	if raw == "" {
+		return 0
+	}
+	var payload struct {
+		ContextLength int64 `json:"context_length"`
+		TopProvider   struct {
+			ContextLength int64 `json:"context_length"`
+		} `json:"top_provider"`
+	}
+	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
+		return 0
+	}
+	if payload.ContextLength > 0 {
+		return payload.ContextLength
+	}
+	return payload.TopProvider.ContextLength
 }
 
 // chatToolCall is a JSON-serializable tool call kept in local history.
@@ -141,11 +178,11 @@ var (
 	_ PreviousResponse      = OpenRouterPreviousResponse{}
 )
 
-func NewOpenRouter(model string, apiKey string, params OpenAIProviderParams, toolSet []tools.Tool) (*OpenRouter, error) {
-	return newOpenRouter(model, apiKey, params, toolSet)
+func NewOpenRouter(ctx context.Context, model string, apiKey string, params OpenAIProviderParams, toolSet []tools.Tool) (*OpenRouter, error) {
+	return newOpenRouter(ctx, model, apiKey, params, toolSet)
 }
 
-func newOpenRouter(model string, apiKey string, params OpenAIProviderParams, toolSet []tools.Tool) (*OpenRouter, error) {
+func newOpenRouter(ctx context.Context, model string, apiKey string, params OpenAIProviderParams, toolSet []tools.Tool) (*OpenRouter, error) {
 	apiKey = strings.TrimSpace(apiKey)
 	if apiKey == "" {
 		return nil, fmt.Errorf("api key is required")
@@ -169,7 +206,21 @@ func newOpenRouter(model string, apiKey string, params OpenAIProviderParams, too
 	if err := provider.initTools(toolSet); err != nil {
 		return nil, err
 	}
+	provider.resolveContextWindow(ctx)
 	return provider, nil
+}
+
+// resolveContextWindow best-effort fetches the model's context window from
+// OpenRouter so the UIs can display context usage. Failures leave it unset.
+func (o *OpenRouter) resolveContextWindow(ctx context.Context) {
+	if ctx == nil {
+		return
+	}
+	length, err := o.client.ModelContextLength(ctx, o.model)
+	if err != nil || length <= 0 {
+		return
+	}
+	o.maxContextTokens = length
 }
 
 func (o *OpenRouter) initTools(toolSet []tools.Tool) error {

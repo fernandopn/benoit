@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -39,15 +40,23 @@ func (s *scriptedChatStream) Err() error {
 }
 
 type scriptedChatClient struct {
-	mu      sync.Mutex
-	streams []chatCompletionStream
-	params  []openai.ChatCompletionNewParams
-	models  []string
+	mu               sync.Mutex
+	streams          []chatCompletionStream
+	params           []openai.ChatCompletionNewParams
+	models           []string
+	contextLength    int64
+	contextLengthErr error
 }
 
 func (c *scriptedChatClient) ListModels(ctx context.Context) ([]string, error) {
 	_ = ctx
 	return c.models, nil
+}
+
+func (c *scriptedChatClient) ModelContextLength(ctx context.Context, model string) (int64, error) {
+	_ = ctx
+	_ = model
+	return c.contextLength, c.contextLengthErr
 }
 
 func (c *scriptedChatClient) NewStreamingChatCompletion(ctx context.Context, params openai.ChatCompletionNewParams) chatCompletionStream {
@@ -333,6 +342,66 @@ func TestOpenRouterEmptyExportAndImport(t *testing.T) {
 	}
 	if len(provider.state.snapshot()) != 0 {
 		t.Fatal("expected empty history after importing empty cursor")
+	}
+}
+
+func TestContextLengthFromModelJSON(t *testing.T) {
+	if got := contextLengthFromModelJSON(`{"id":"z-ai/glm-5.1","context_length":202752}`); got != 202752 {
+		t.Fatalf("expected root context_length, got %d", got)
+	}
+	if got := contextLengthFromModelJSON(`{"id":"m","top_provider":{"context_length":131072}}`); got != 131072 {
+		t.Fatalf("expected top_provider fallback, got %d", got)
+	}
+	if got := contextLengthFromModelJSON(`{"id":"m"}`); got != 0 {
+		t.Fatalf("expected 0 when absent, got %d", got)
+	}
+	if got := contextLengthFromModelJSON(""); got != 0 {
+		t.Fatalf("expected 0 for empty raw, got %d", got)
+	}
+}
+
+func TestOpenRouterResolveContextWindow(t *testing.T) {
+	provider := newTestOpenRouter(&scriptedChatClient{contextLength: 200000})
+	provider.resolveContextWindow(context.Background())
+	if provider.maxContextTokens != 200000 {
+		t.Fatalf("expected resolved context window 200000, got %d", provider.maxContextTokens)
+	}
+
+	failing := newTestOpenRouter(&scriptedChatClient{contextLengthErr: errors.New("boom")})
+	failing.resolveContextWindow(context.Background())
+	if failing.maxContextTokens != 0 {
+		t.Fatalf("expected context window to stay unset on error, got %d", failing.maxContextTokens)
+	}
+}
+
+func TestOpenRouterContextUsageUsesResolvedWindow(t *testing.T) {
+	client := &scriptedChatClient{
+		contextLength: 1000,
+		streams: []chatCompletionStream{
+			&scriptedChatStream{chunks: []openai.ChatCompletionChunk{
+				chatChunk(t, `{"id":"c1","object":"chat.completion.chunk","created":0,"model":"m","choices":[{"index":0,"finish_reason":"stop","delta":{"content":"ok"}}]}`),
+				chatChunk(t, `{"id":"c1","object":"chat.completion.chunk","created":0,"model":"m","choices":[],"usage":{"prompt_tokens":123,"completion_tokens":45,"total_tokens":168}}`),
+			}},
+		},
+	}
+	provider := newTestOpenRouter(client)
+	provider.resolveContextWindow(context.Background())
+
+	msgs := collectMsgs(t, provider.Chat(context.Background(), "hi"))
+	var usage *Msg
+	for i := range msgs {
+		if msgs[i].Type == MsgTypeContextUsage {
+			usage = &msgs[i]
+		}
+	}
+	if usage == nil {
+		t.Fatal("expected a context usage message")
+	}
+	if usage.Value != "12.3%" {
+		t.Fatalf("unexpected context usage value: %q", usage.Value)
+	}
+	if usage.Metadata["tokens_available"] != "1000" {
+		t.Fatalf("unexpected tokens_available: %q", usage.Metadata["tokens_available"])
 	}
 }
 
