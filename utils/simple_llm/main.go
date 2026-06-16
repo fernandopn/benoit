@@ -15,15 +15,22 @@ import (
 )
 
 const (
-	defaultModel   = "gpt-5.2"
-	defaultTimeout = 20 * time.Minute
+	providerOpenAI     = "openai"
+	providerOpenRouter = "openrouter"
 
-	openAIAPIKeyEnv = "OPENAI_API_KEY"
+	defaultProvider        = providerOpenAI
+	defaultOpenAIModel     = "gpt-5.2"
+	defaultOpenRouterModel = "z-ai/glm-5.1"
+	defaultTimeout         = 20 * time.Minute
+
+	openAIAPIKeyEnv     = "OPENAI_API_KEY"
+	openRouterAPIKeyEnv = "OPENROUTER_API_KEY"
 )
 
 type config struct {
-	model   string
-	timeout time.Duration
+	provider string
+	model    string
+	timeout  time.Duration
 }
 
 func main() {
@@ -39,12 +46,8 @@ func run(args []string) error {
 		return err
 	}
 
-	apiKey := strings.TrimSpace(os.Getenv(openAIAPIKeyEnv))
-	if apiKey == "" {
-		return fmt.Errorf("%s is not set", openAIAPIKeyEnv)
-	}
-
-	provider, err := providers.NewOpenAI(cfg.model, apiKey, providers.OpenAIProviderParams{}, nil)
+	ctx := context.Background()
+	provider, err := buildProvider(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -77,10 +80,10 @@ func run(args []string) error {
 			return nil
 		}
 
-		requestCtx := context.Background()
+		requestCtx := ctx
 		cancel := func() {}
 		if cfg.timeout > 0 {
-			requestCtx, cancel = context.WithTimeout(requestCtx, cfg.timeout)
+			requestCtx, cancel = context.WithTimeout(ctx, cfg.timeout)
 		}
 		response, err := finalMessage(requestCtx, provider, input)
 		cancel()
@@ -93,9 +96,29 @@ func run(args []string) error {
 	}
 }
 
+func buildProvider(ctx context.Context, cfg config) (providers.Provider, error) {
+	switch cfg.provider {
+	case providerOpenRouter:
+		apiKey := strings.TrimSpace(os.Getenv(openRouterAPIKeyEnv))
+		if apiKey == "" {
+			return nil, fmt.Errorf("%s is not set", openRouterAPIKeyEnv)
+		}
+		return providers.NewOpenRouter(ctx, cfg.model, apiKey, providers.OpenAIProviderParams{}, nil)
+	case providerOpenAI:
+		apiKey := strings.TrimSpace(os.Getenv(openAIAPIKeyEnv))
+		if apiKey == "" {
+			return nil, fmt.Errorf("%s is not set", openAIAPIKeyEnv)
+		}
+		return providers.NewOpenAI(cfg.model, apiKey, providers.OpenAIProviderParams{}, nil)
+	default:
+		return nil, fmt.Errorf("invalid provider %q (use openai or openrouter)", cfg.provider)
+	}
+}
+
 func loadConfig(args []string) (config, error) {
 	flagSet := flag.NewFlagSet("simple-llm", flag.ContinueOnError)
-	model := flagSet.String("model", defaultModel, "model name")
+	provider := flagSet.String("provider", defaultProvider, "llm provider: openai or openrouter")
+	model := flagSet.String("model", "", "model name (default: gpt-5.2 for openai, z-ai/glm-5.1 for openrouter)")
 	timeout := flagSet.Duration("timeout", defaultTimeout, "request timeout (e.g. 45s, 2m)")
 	if err := flagSet.Parse(args); err != nil {
 		return config{}, err
@@ -107,7 +130,24 @@ func loadConfig(args []string) (config, error) {
 		return config{}, errors.New("timeout cannot be negative")
 	}
 
-	return config{model: strings.TrimSpace(*model), timeout: *timeout}, nil
+	providerName := strings.ToLower(strings.TrimSpace(*provider))
+	if providerName != providerOpenAI && providerName != providerOpenRouter {
+		return config{}, fmt.Errorf("invalid provider %q (use openai or openrouter)", *provider)
+	}
+
+	modelName := strings.TrimSpace(*model)
+	if modelName == "" {
+		modelName = defaultModelForProvider(providerName)
+	}
+
+	return config{provider: providerName, model: modelName, timeout: *timeout}, nil
+}
+
+func defaultModelForProvider(provider string) string {
+	if provider == providerOpenRouter {
+		return defaultOpenRouterModel
+	}
+	return defaultOpenAIModel
 }
 
 func finalMessage(ctx context.Context, provider providers.Provider, input string) (string, error) {
