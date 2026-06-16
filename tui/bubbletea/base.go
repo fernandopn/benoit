@@ -3,10 +3,31 @@ package bubbletea
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/fernandopn/benoit/providers"
 	tuicmd "github.com/fernandopn/benoit/tui/commands"
 )
+
+func formatEnabledTools(toolNames []string) string {
+	names := make([]string, 0, len(toolNames))
+	for _, name := range toolNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "Enabled tools (%d):", len(names))
+	for _, name := range names {
+		builder.WriteString("\n  - " + name)
+	}
+	return builder.String()
+}
 
 const (
 	userBackgroundColor      = "#1C1C1C"
@@ -31,6 +52,7 @@ type Config struct {
 	ProviderName string
 	WelcomeText  string
 	HelpText     string
+	ToolNames    []string
 	StartStream  StreamStarter
 }
 

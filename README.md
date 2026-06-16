@@ -22,6 +22,7 @@ two backends selected with `-provider`:
 
 ## Usage
 
+- On startup the interactive modes (`tui`, `ssh`) print the list of enabled tools in the header.
 - Type a line after the `>: ` prompt.
 - Type `/compact` (or `/compact <max_words>`) to compact and re-seed context.
 - Submit `/exit` or `/quit` to leave.
@@ -129,6 +130,7 @@ two backends selected with `-provider`:
 - Telegram allowlist is loaded from `TELEGRAM_ALLOWED_USERS` (comma-separated user IDs); empty means deny all.
 - SSH allowlist is loaded from `SSH_ALLOWED_PUBLIC_KEYS` (comma-separated authorized public keys); required for `ssh` command.
 - Tools always enabled in provider commands: `code_interpreter`, `web_search`, `get_time`.
+- Interactive modes (`tui`, `ssh`) list the enabled tools in the startup header so you can confirm which tools are active for the session.
 - Interactive modes (`tui`, `ssh`) enable filesystem tools only when `-fs-root` is explicitly provided: `glob`, `grep`, `read`, `write`, `apply_patch`.
 - File tool paths are virtualized when `-fs-root` is set: `/` maps to the configured sandbox root on disk, and all resolved paths are still validated against the allowed prefix policy.
 - In sandbox mode, do not assume `/mnt/data` exists; discover available roots with `glob` using `path: "/"` and `pattern: "*"`.

@@ -272,7 +272,7 @@ func telegramSessionID(userID int64) string {
 func writeTelegramHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
 	title := "Benoit · " + providerName + " · Telegram"
 	hint := "Listening for Telegram messages | Ctrl+C to quit"
-	simpleui.WriteHeader(writer, colors, title, hint, width)
+	simpleui.WriteHeader(writer, colors, title, hint, width, nil)
 }
 
 func writeTelegramIncoming(writer *bufio.Writer, colors simpleTheme, message channels.ChannelMessage) {

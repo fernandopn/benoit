@@ -204,9 +204,12 @@ func newModel(ctx context.Context, cfg Config) model {
 	assistantMarkdownStyle := assistantMarkdownStyleConfig()
 	reasoningMarkdownStyle := reasoningMarkdownStyleConfig(muted)
 
-	blocks := make([]block, 0, 1)
+	blocks := make([]block, 0, 2)
 	if cfg.WelcomeText != "" {
 		blocks = append(blocks, block{Kind: blockSystem, Text: cfg.WelcomeText})
+	}
+	if toolsText := formatEnabledTools(cfg.ToolNames); toolsText != "" {
+		blocks = append(blocks, block{Kind: blockSystem, Text: toolsText})
 	}
 
 	m := model{

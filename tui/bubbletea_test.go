@@ -70,18 +70,18 @@ func TestRun(t *testing.T) {
 	t.Run("forces simple mode when requested", func(t *testing.T) {
 		isTerminalAvailable = func() bool { return true }
 		simpleCalled := false
-		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string) {
+		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string, _ []string) {
 			simpleCalled = true
 			if sessionID != "session-abc" {
 				t.Fatalf("unexpected session id: %q", sessionID)
 			}
 		}
-		runBubbleTeaUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string) error {
+		runBubbleTeaUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string, _ []string) error {
 			t.Fatal("bubble tea should not run when simple mode requested")
 			return nil
 		}
 
-		err := Run(context.Background(), provider, time.Second, true, "session-abc")
+		err := Run(context.Background(), provider, time.Second, true, "session-abc", nil)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}
@@ -93,19 +93,19 @@ func TestRun(t *testing.T) {
 	t.Run("uses bubbletea when terminal available and not forced", func(t *testing.T) {
 		isTerminalAvailable = func() bool { return true }
 		simpleCalled := false
-		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string) {
+		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string, _ []string) {
 			simpleCalled = true
 		}
 
 		expectedErr := errors.New("bubble failure")
-		runBubbleTeaUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string) error {
+		runBubbleTeaUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string, _ []string) error {
 			if sessionID != "session-def" {
 				t.Fatalf("unexpected session id: %q", sessionID)
 			}
 			return expectedErr
 		}
 
-		err := Run(context.Background(), provider, time.Second, false, "session-def")
+		err := Run(context.Background(), provider, time.Second, false, "session-def", nil)
 		if err != expectedErr {
 			t.Fatalf("expected bubble tea error, got %v", err)
 		}
@@ -117,18 +117,18 @@ func TestRun(t *testing.T) {
 	t.Run("falls back to simple when no terminal", func(t *testing.T) {
 		isTerminalAvailable = func() bool { return false }
 		simpleCalled := false
-		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string) {
+		runSimpleUI = func(_ context.Context, _ providers.Provider, _ time.Duration, sessionID string, _ []string) {
 			simpleCalled = true
 			if sessionID != "session-ghi" {
 				t.Fatalf("unexpected session id: %q", sessionID)
 			}
 		}
-		runBubbleTeaUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string) error {
+		runBubbleTeaUI = func(_ context.Context, _ providers.Provider, _ time.Duration, _ string, _ []string) error {
 			t.Fatal("bubble tea should not run when terminal unavailable")
 			return nil
 		}
 
-		err := Run(context.Background(), provider, time.Second, false, "session-ghi")
+		err := Run(context.Background(), provider, time.Second, false, "session-ghi", nil)
 		if err != nil {
 			t.Fatalf("expected no error, got %v", err)
 		}

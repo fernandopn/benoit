@@ -17,17 +17,17 @@ var isTerminalAvailable = func() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
-func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) error {
-	return runBubbleTeaUI(ctx, provider, timeout, sessionID)
+func RunBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string, toolNames []string) error {
+	return runBubbleTeaUI(ctx, provider, timeout, sessionID, toolNames)
 }
 
-var runSimpleUI = func(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) {
-	RunSimple(ctx, provider, timeout, sessionID)
+var runSimpleUI = func(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string, toolNames []string) {
+	RunSimple(ctx, provider, timeout, sessionID, toolNames)
 }
 
 var runBubbleTeaUI = runBubbleTea
 
-func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) error {
+func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string, toolNames []string) error {
 	if provider == nil {
 		return errors.New("provider is required")
 	}
@@ -38,6 +38,7 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 		ProviderName: provider.Name(),
 		WelcomeText:  bubbleteaui.DefaultWelcomeText,
 		HelpText:     bubbleteaui.DefaultHelpText,
+		ToolNames:    toolNames,
 		StartStream: func(reqCtx context.Context, prompt string) (<-chan providers.Msg, context.CancelFunc, error) {
 			streamCtx := reqCtx
 			cancel := func() {}
@@ -56,12 +57,12 @@ func runBubbleTea(ctx context.Context, provider providers.Provider, timeout time
 	return bubbleteaui.Run(ctx, cfg, tea.WithAltScreen(), tea.WithMouseCellMotion())
 }
 
-func Run(ctx context.Context, provider providers.Provider, timeout time.Duration, useSimple bool, sessionID string) error {
+func Run(ctx context.Context, provider providers.Provider, timeout time.Duration, useSimple bool, sessionID string, toolNames []string) error {
 	if shouldUseSimpleUI(useSimple) {
-		runSimpleUI(ctx, provider, timeout, sessionID)
+		runSimpleUI(ctx, provider, timeout, sessionID, toolNames)
 		return nil
 	}
-	return runBubbleTeaUI(ctx, provider, timeout, sessionID)
+	return runBubbleTeaUI(ctx, provider, timeout, sessionID, toolNames)
 }
 
 func shouldUseSimpleUI(forceSimple bool) bool {

@@ -12,7 +12,7 @@ func TestWriteHeader(t *testing.T) {
 		var buf bytes.Buffer
 		writer := bufio.NewWriter(&buf)
 
-		WriteHeader(writer, NewTheme(false), "title", "hint", 0)
+		WriteHeader(writer, NewTheme(false), "title", "hint", 0, nil)
 		if err := writer.Flush(); err != nil {
 			t.Fatalf("flush: %v", err)
 		}
@@ -36,7 +36,7 @@ func TestWriteHeader(t *testing.T) {
 		var buf bytes.Buffer
 		writer := bufio.NewWriter(&buf)
 
-		WriteHeader(writer, NewTheme(false), "title", "  hint with spaces  ", 100)
+		WriteHeader(writer, NewTheme(false), "title", "  hint with spaces  ", 100, nil)
 		if err := writer.Flush(); err != nil {
 			t.Fatalf("flush: %v", err)
 		}
@@ -50,6 +50,38 @@ func TestWriteHeader(t *testing.T) {
 		}
 		if !strings.Contains(out, "\n\n") {
 			t.Fatal("expected final blank line")
+		}
+	})
+
+	t.Run("with enabled tools", func(t *testing.T) {
+		var buf bytes.Buffer
+		writer := bufio.NewWriter(&buf)
+
+		WriteHeader(writer, NewTheme(false), "title", "hint", 100, []string{"clock", " ", "web_search"})
+		if err := writer.Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+
+		out := buf.String()
+		if !strings.Contains(out, "Enabled tools (2):") {
+			t.Fatalf("expected enabled tools count, got %q", out)
+		}
+		if !strings.Contains(out, "  - clock") || !strings.Contains(out, "  - web_search") {
+			t.Fatalf("expected tool names listed, got %q", out)
+		}
+	})
+
+	t.Run("omits tools section when empty", func(t *testing.T) {
+		var buf bytes.Buffer
+		writer := bufio.NewWriter(&buf)
+
+		WriteHeader(writer, NewTheme(false), "title", "hint", 100, nil)
+		if err := writer.Flush(); err != nil {
+			t.Fatalf("flush: %v", err)
+		}
+
+		if strings.Contains(buf.String(), "Enabled tools") {
+			t.Fatalf("did not expect tools section, got %q", buf.String())
 		}
 	})
 }

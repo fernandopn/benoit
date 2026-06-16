@@ -155,7 +155,7 @@ func runWithConfig(ctx context.Context, cfg Config) (runErr error) {
 		return runListSessions(ctx, cfg)
 	}
 
-	provider, closeProvider, err := buildProvider(ctx, cfg)
+	provider, toolNames, closeProvider, err := buildProvider(ctx, cfg)
 	if err != nil {
 		return err
 	}
@@ -172,7 +172,7 @@ func runWithConfig(ctx context.Context, cfg Config) (runErr error) {
 		}()
 	}
 
-	if err := runCommand(ctx, cfg, provider); err != nil {
+	if err := runCommand(ctx, cfg, provider, toolNames); err != nil {
 		return err
 	}
 	return nil
@@ -260,12 +260,49 @@ func validateProviderCommandConfig(cfg Config) error {
 	return nil
 }
 
-func buildProvider(ctx context.Context, cfg Config) (providers.Provider, func() error, error) {
+func buildProvider(ctx context.Context, cfg Config) (providers.Provider, []string, func() error, error) {
 	toolSet, err := selectedTools(cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("tool config error: %w", err)
+		return nil, nil, nil, fmt.Errorf("tool config error: %w", err)
 	}
-	return providerStackOrchestrator.Build(ctx, cfg, toolSet)
+	provider, closeProvider, err := providerStackOrchestrator.Build(ctx, cfg, toolSet)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return provider, toolNames(enabledToolsForProvider(cfg.Provider, toolSet)), closeProvider, nil
+}
+
+func toolNames(toolSet []tools.Tool) []string {
+	names := make([]string, 0, len(toolSet))
+	for _, tool := range toolSet {
+		name := strings.TrimSpace(tool.Schema().Name)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// enabledToolsForProvider drops tools the selected provider cannot expose.
+// OpenRouter uses the stateless Chat Completions API, which cannot run
+// provider-hosted tools (for example code_interpreter and web_search); those
+// are skipped there, mirroring the OpenRouter provider's own tool registration.
+func enabledToolsForProvider(provider ProviderName, toolSet []tools.Tool) []tools.Tool {
+	if provider != ProviderOpenRouter {
+		return toolSet
+	}
+	filtered := make([]tools.Tool, 0, len(toolSet))
+	for _, tool := range toolSet {
+		if tool == nil {
+			continue
+		}
+		if tool.Schema().Kind != tools.ToolKindFunction {
+			continue
+		}
+		filtered = append(filtered, tool)
+	}
+	return filtered
 }
 
 func (d defaultProviderStackOrchestrator) Build(ctx context.Context, cfg Config, toolSet []tools.Tool) (providers.Provider, func() error, error) {
@@ -376,12 +413,12 @@ func buildOpenRouterProvider(ctx context.Context, model string, apiKey string, p
 	return provider, nil, nil
 }
 
-func runCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
+func runCommand(ctx context.Context, cfg Config, provider providers.Provider, toolNames []string) error {
 	switch cfg.Command {
 	case CommandTUI:
-		return runTUICommand(ctx, cfg, provider)
+		return runTUICommand(ctx, cfg, provider, toolNames)
 	case CommandSSH:
-		return runSSHCommand(ctx, cfg, provider)
+		return runSSHCommand(ctx, cfg, provider, toolNames)
 	case CommandChannelListener:
 		return runChannelListenerCommand(ctx, cfg, provider)
 	default:
@@ -389,15 +426,15 @@ func runCommand(ctx context.Context, cfg Config, provider providers.Provider) er
 	}
 }
 
-func runTUICommand(ctx context.Context, cfg Config, provider providers.Provider) error {
+func runTUICommand(ctx context.Context, cfg Config, provider providers.Provider, toolNames []string) error {
 	useSimpleMode := cfg.Render == RenderSimple
-	if err := tui.Run(ctx, provider, cfg.Timeout, useSimpleMode, strings.TrimSpace(cfg.SessionID)); err != nil {
+	if err := tui.Run(ctx, provider, cfg.Timeout, useSimpleMode, strings.TrimSpace(cfg.SessionID), toolNames); err != nil {
 		return fmt.Errorf("tui error: %w", err)
 	}
 	return nil
 }
 
-func runSSHCommand(ctx context.Context, cfg Config, provider providers.Provider) error {
+func runSSHCommand(ctx context.Context, cfg Config, provider providers.Provider, toolNames []string) error {
 	port := cfg.SSHPort
 	if port == 0 {
 		port = defaultSSHPort
@@ -412,6 +449,7 @@ func runSSHCommand(ctx context.Context, cfg Config, provider providers.Provider)
 		Timeout:           cfg.Timeout,
 		UseSimple:         false,
 		SessionID:         strings.TrimSpace(cfg.SessionID),
+		ToolNames:         toolNames,
 	}
 	if err := tui.RunSSH(ctx, provider, sshCfg); err != nil {
 		return fmt.Errorf("ssh error: %w", err)

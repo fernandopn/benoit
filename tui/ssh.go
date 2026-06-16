@@ -32,6 +32,7 @@ type SSHConfig struct {
 	Timeout           time.Duration
 	UseSimple         bool
 	SessionID         string
+	ToolNames         []string
 }
 
 func RunSSH(ctx context.Context, provider providers.Provider, cfg SSHConfig) error {
@@ -85,10 +86,10 @@ func RunSSH(ctx context.Context, provider providers.Provider, cfg SSHConfig) err
 	}
 
 	if cfg.UseSimple {
-		options = append(options, wish.WithMiddleware(simpleSSHMiddleware(provider, cfg.Timeout, cfg.SessionID)))
+		options = append(options, wish.WithMiddleware(simpleSSHMiddleware(provider, cfg.Timeout, cfg.SessionID, cfg.ToolNames)))
 	} else {
 		options = append(options, wish.WithMiddleware(
-			wishbubbletea.Middleware(sshBubbleTeaHandler(provider, cfg.Timeout, cfg.SessionID)),
+			wishbubbletea.Middleware(sshBubbleTeaHandler(provider, cfg.Timeout, cfg.SessionID, cfg.ToolNames)),
 			activeterm.Middleware(),
 		))
 	}
@@ -138,7 +139,7 @@ func runSSHServer(ctx context.Context, server *ssh.Server) error {
 	}
 }
 
-func sshBubbleTeaHandler(provider providers.Provider, timeout time.Duration, configuredSessionID string) wishbubbletea.Handler {
+func sshBubbleTeaHandler(provider providers.Provider, timeout time.Duration, configuredSessionID string, toolNames []string) wishbubbletea.Handler {
 	return func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		sessionID := resolveSSHSessionID(configuredSessionID)
 		start := streamStartForProvider(provider, sessionID)
@@ -147,6 +148,7 @@ func sshBubbleTeaHandler(provider providers.Provider, timeout time.Duration, con
 			ProviderName: provider.Name(),
 			WelcomeText:  bubbleteaui.DefaultWelcomeText,
 			HelpText:     bubbleteaui.DefaultHelpText,
+			ToolNames:    toolNames,
 			StartStream: func(reqCtx context.Context, prompt string) (<-chan providers.Msg, context.CancelFunc, error) {
 				streamCtx := reqCtx
 				cancel := func() {}
@@ -172,16 +174,16 @@ func sshBubbleTeaHandler(provider providers.Provider, timeout time.Duration, con
 	}
 }
 
-func simpleSSHMiddleware(provider providers.Provider, timeout time.Duration, configuredSessionID string) wish.Middleware {
+func simpleSSHMiddleware(provider providers.Provider, timeout time.Duration, configuredSessionID string, toolNames []string) wish.Middleware {
 	return func(next ssh.Handler) ssh.Handler {
 		return func(sess ssh.Session) {
-			runSimpleSSHSession(sess.Context(), sess, provider, timeout, configuredSessionID)
+			runSimpleSSHSession(sess.Context(), sess, provider, timeout, configuredSessionID, toolNames)
 			next(sess)
 		}
 	}
 }
 
-func runSimpleSSHSession(ctx context.Context, sess ssh.Session, provider providers.Provider, timeout time.Duration, configuredSessionID string) {
+func runSimpleSSHSession(ctx context.Context, sess ssh.Session, provider providers.Provider, timeout time.Duration, configuredSessionID string, toolNames []string) {
 	if sess == nil {
 		return
 	}
@@ -195,7 +197,7 @@ func runSimpleSSHSession(ctx context.Context, sess ssh.Session, provider provide
 	sessionID := resolveSSHSessionID(configuredSessionID)
 	start := streamStartForProvider(provider, sessionID)
 
-	writeSimpleHeader(writer, colors, provider.Name(), width)
+	writeSimpleHeader(writer, colors, provider.Name(), width, toolNames)
 	_ = writer.Flush()
 
 	for {

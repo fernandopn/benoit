@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/fernandopn/benoit/tools"
 )
 
 const testAllowedSSHPublicKey = "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBKgqCeVrp2Ar5RjOtH9cR1VyI/1pkzTNJIyTKbyRN7tTCCBC8aQBpp2g+WmAA2gD0DzxeoHUvr9+5dydzH29XGo= GitHub@secretive.Ultron.local"
@@ -796,6 +794,41 @@ func TestSelectedTools(t *testing.T) {
 	})
 }
 
+func TestEnabledToolsForProvider(t *testing.T) {
+	const fsRoot = "/tmp/benoit-tools"
+
+	toolSet, err := selectedTools(Config{Command: CommandTUI, FSRoot: fsRoot, FSRootProvided: true})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	t.Run("openai keeps hosted tools", func(t *testing.T) {
+		names := toolNames(enabledToolsForProvider(ProviderOpenAI, toolSet))
+		expected := []string{"code_interpreter", "web_search", "get_time", "glob", "grep", "read", "write", "apply_patch"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+
+	t.Run("openrouter drops hosted tools", func(t *testing.T) {
+		names := toolNames(enabledToolsForProvider(ProviderOpenRouter, toolSet))
+		expected := []string{"get_time", "glob", "grep", "read", "write", "apply_patch"}
+		if len(names) != len(expected) {
+			t.Fatalf("unexpected tool count: %v", names)
+		}
+		for i, want := range expected {
+			if names[i] != want {
+				t.Fatalf("tool order mismatch at %d: got %q expected %q", i, names[i], want)
+			}
+		}
+	})
+}
+
 func TestValidateConfigSessionID(t *testing.T) {
 	cfg := Config{
 		Command: CommandTUI,
@@ -906,12 +939,4 @@ func TestValidateConfigSessionIDSSH(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 	})
-}
-
-func toolNames(toolSet []tools.Tool) []string {
-	names := make([]string, 0, len(toolSet))
-	for _, tool := range toolSet {
-		names = append(names, tool.Schema().Name)
-	}
-	return names
 }

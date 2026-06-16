@@ -23,7 +23,7 @@ type pendingToolCall struct {
 	args string
 }
 
-func RunSimple(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string) {
+func RunSimple(ctx context.Context, provider providers.Provider, timeout time.Duration, sessionID string, toolNames []string) {
 	if ctx == nil {
 		fmt.Fprintln(os.Stderr, "context error: context is required")
 		return
@@ -35,7 +35,7 @@ func RunSimple(ctx context.Context, provider providers.Provider, timeout time.Du
 	sessionID = session.ResolveTUISessionID(sessionID)
 	start := streamStartForProvider(provider, sessionID)
 
-	writeSimpleHeader(writer, colors, provider.Name(), width)
+	writeSimpleHeader(writer, colors, provider.Name(), width, toolNames)
 	writer.Flush()
 
 	for {
@@ -147,10 +147,10 @@ func simpleTerminalWidth() int {
 	return simpleui.TerminalWidth(os.Stdout)
 }
 
-func writeSimpleHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int) {
+func writeSimpleHeader(writer *bufio.Writer, colors simpleTheme, providerName string, width int, toolNames []string) {
 	title := "Benoit · " + providerName
 	hint := "Enter to send | See commands / + <tab>"
-	simpleui.WriteHeader(writer, colors, title, hint, width)
+	simpleui.WriteHeader(writer, colors, title, hint, width, toolNames)
 }
 
 func readSimpleInput(reader *bufio.Reader, writer *bufio.Writer, prompt string) (string, error) {

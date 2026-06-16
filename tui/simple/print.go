@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-func WriteHeader(writer *bufio.Writer, theme Theme, title string, hint string, width int) {
+func WriteHeader(writer *bufio.Writer, theme Theme, title string, hint string, width int, toolNames []string) {
 	if writer == nil {
 		return
 	}
@@ -17,7 +17,26 @@ func WriteHeader(writer *bufio.Writer, theme Theme, title string, hint string, w
 			fmt.Fprintln(writer, theme.Style(hint, theme.Dim, theme.FGMuted))
 		}
 	}
+	writeEnabledTools(writer, theme, toolNames)
 	fmt.Fprintln(writer)
+}
+
+func writeEnabledTools(writer *bufio.Writer, theme Theme, toolNames []string) {
+	names := make([]string, 0, len(toolNames))
+	for _, name := range toolNames {
+		name = strings.TrimSpace(name)
+		if name != "" {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return
+	}
+	label := fmt.Sprintf("Enabled tools (%d):", len(names))
+	fmt.Fprintln(writer, theme.Style(label, theme.Dim, theme.FGMuted))
+	for _, name := range names {
+		fmt.Fprintln(writer, theme.Style("  - "+name, theme.Dim, theme.FGMuted))
+	}
 }
 
 func WriteToolCard(writer *bufio.Writer, theme Theme, width int, toolName, args, body string) {
