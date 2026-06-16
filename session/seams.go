@@ -8,7 +8,7 @@ import (
 )
 
 type PreviousResponseLookup interface {
-	PreviousResponseID(ctx context.Context, providerType providers.ProviderType, sessionID string) (string, bool, error)
+	PreviousResponse(ctx context.Context, providerType providers.ProviderType, sessionID string) (string, bool, error)
 }
 
 type MiddlewareFactory func(ctx context.Context, provider providers.Provider, providerType providers.ProviderType, sessionID string) (providers.Provider, error)

@@ -46,8 +46,16 @@ const (
 	ChannelTelegram ChannelMode = "telegram"
 )
 
+type ProviderName string
+
+const (
+	ProviderOpenAI     ProviderName = "openai"
+	ProviderOpenRouter ProviderName = "openrouter"
+)
+
 type CredentialConfig struct {
 	OpenAIAPIKey            string
+	OpenRouterAPIKey        string
 	TelegramBotToken        string
 	MatonAPIKey             string
 	TelegramAllowedUserIDs  []int64
@@ -58,6 +66,7 @@ type Config struct {
 	Command                    Command
 	Render                     RenderMode
 	Channel                    ChannelMode
+	Provider                   ProviderName
 	SessionID                  string
 	SSHPort                    int
 	SSHAllowedPublicKeys       []string
@@ -79,6 +88,9 @@ const (
 	openAIReasoningSummary            = shared.ReasoningSummaryDetailed
 	defaultRenderMode                 = string(RenderSimple)
 	defaultChannelMode                = string(ChannelTelegram)
+	defaultProviderName               = string(ProviderOpenAI)
+	defaultOpenAIModel                = "gpt-5.5"
+	defaultOpenRouterModel            = "z-ai/glm-5.1"
 	defaultSSHPort                    = 23234
 	defaultSSHHostKeyPath             = "data/.ssh/host_ed25519"
 	defaultEnvFilePath                = ".env"
@@ -86,6 +98,7 @@ const (
 	defaultTelegramPollTimeoutSeconds = 30
 
 	openAIAPIKeyEnv         = "OPENAI_API_KEY"
+	openRouterAPIKeyEnv     = "OPENROUTER_API_KEY"
 	telegramAPIKeyEnv       = "TELEGRAM_API_KEY"
 	matonAPIKeyEnv          = "MATON_API_KEY"
 	telegramAllowedUsersEnv = "TELEGRAM_ALLOWED_USERS"
@@ -234,8 +247,15 @@ func validateProviderCommandConfig(cfg Config) error {
 	if strings.TrimSpace(cfg.Model) == "" {
 		return fmt.Errorf("flag error: model is required")
 	}
-	if strings.TrimSpace(cfg.Credentials.OpenAIAPIKey) == "" {
-		return fmt.Errorf("credential error: OPENAI_API_KEY is not set")
+	switch cfg.Provider {
+	case ProviderOpenRouter:
+		if strings.TrimSpace(cfg.Credentials.OpenRouterAPIKey) == "" {
+			return fmt.Errorf("credential error: %s is not set", openRouterAPIKeyEnv)
+		}
+	default:
+		if strings.TrimSpace(cfg.Credentials.OpenAIAPIKey) == "" {
+			return fmt.Errorf("credential error: %s is not set", openAIAPIKeyEnv)
+		}
 	}
 	return nil
 }
@@ -273,13 +293,15 @@ func (d defaultProviderStackOrchestrator) Build(ctx context.Context, cfg Config,
 	}
 	middlewareFactories := buildSessionMiddleware(cfg, sessionStore, traceStore)
 
+	providerType, apiKey, providerBuilder := selectProvider(cfg)
 	routerCfg := session.Config{
 		Model:                cfg.Model,
-		OpenAIAPIKey:         cfg.Credentials.OpenAIAPIKey,
+		OpenAIAPIKey:         apiKey,
+		ProviderType:         providerType,
 		OpenAIProviderParams: cfg.OpenAIProviderParams,
 		SessionLookup:        sessionStoreLookupAdapter{store: sessionStore},
 		MiddlewareFactories:  middlewareFactories,
-		ProviderBuilder:      buildOpenAIProvider,
+		ProviderBuilder:      providerBuilder,
 	}
 	router, closeFactory, err := session.NewRouterProvider(ctx, routerCfg, toolSet)
 	if err != nil {
@@ -299,7 +321,7 @@ type sessionStoreLookupAdapter struct {
 	store persistence.SessionStore
 }
 
-func (s sessionStoreLookupAdapter) PreviousResponseID(ctx context.Context, providerType providers.ProviderType, sessionID string) (string, bool, error) {
+func (s sessionStoreLookupAdapter) PreviousResponse(ctx context.Context, providerType providers.ProviderType, sessionID string) (string, bool, error) {
 	if s.store == nil {
 		return "", false, nil
 	}
@@ -307,7 +329,14 @@ func (s sessionStoreLookupAdapter) PreviousResponseID(ctx context.Context, provi
 	if err != nil {
 		return "", false, err
 	}
-	return state.PreviousResponseID, found, nil
+	return state.PreviousResponse, found, nil
+}
+
+func selectProvider(cfg Config) (providers.ProviderType, string, session.ProviderBuilder) {
+	if cfg.Provider == ProviderOpenRouter {
+		return providers.ProviderTypeOpenRouter, cfg.Credentials.OpenRouterAPIKey, buildOpenRouterProvider
+	}
+	return providers.ProviderTypeOpenAI, cfg.Credentials.OpenAIAPIKey, buildOpenAIProvider
 }
 
 func buildSessionMiddleware(cfg Config, store persistence.SessionStore, traceStore persistence.TraceMessageStore) []session.MiddlewareFactory {
@@ -333,6 +362,14 @@ func buildSessionMiddleware(cfg Config, store persistence.SessionStore, traceSto
 
 func buildOpenAIProvider(_ context.Context, model string, apiKey string, params providers.OpenAIProviderParams, toolSet []tools.Tool) (providers.Provider, func() error, error) {
 	provider, err := providers.NewOpenAI(model, apiKey, params, toolSet)
+	if err != nil {
+		return nil, nil, err
+	}
+	return provider, nil, nil
+}
+
+func buildOpenRouterProvider(_ context.Context, model string, apiKey string, params providers.OpenAIProviderParams, toolSet []tools.Tool) (providers.Provider, func() error, error) {
+	provider, err := providers.NewOpenRouter(model, apiKey, params, toolSet)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -427,7 +464,7 @@ func runListSessions(ctx context.Context, cfg Config) error {
 
 	fmt.Printf("Sessions (%d)\n", len(sessions))
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "PROVIDER\tSESSION ID\tPREVIOUS RESPONSE ID\tTOKENS LEFT\tUPDATED AT")
+	fmt.Fprintln(w, "PROVIDER\tSESSION ID\tPREVIOUS RESPONSE\tTOKENS LEFT\tUPDATED AT")
 	for _, state := range sessions {
 		remaining := "-"
 		if state.RemainingTokens != nil {
@@ -437,14 +474,14 @@ func runListSessions(ctx context.Context, cfg Config) error {
 		if state.UpdatedAtUnix > 0 {
 			updatedAt = time.Unix(state.UpdatedAtUnix, 0).UTC().Format(time.RFC3339)
 		}
-		previousResponseID := strings.TrimSpace(state.PreviousResponseID)
-		if previousResponseID == "" {
-			previousResponseID = "-"
+		previousResponse := truncateForDisplay(strings.TrimSpace(state.PreviousResponse), 60)
+		if previousResponse == "" {
+			previousResponse = "-"
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
 			state.Provider.String(),
 			state.SessionID,
-			previousResponseID,
+			previousResponse,
 			remaining,
 			updatedAt,
 		)
@@ -453,6 +490,16 @@ func runListSessions(ctx context.Context, cfg Config) error {
 		return fmt.Errorf("list sessions output error: %w", err)
 	}
 	return nil
+}
+
+func truncateForDisplay(value string, max int) string {
+	if max <= 0 || len(value) <= max {
+		return value
+	}
+	if max <= 3 {
+		return value[:max]
+	}
+	return value[:max-3] + "..."
 }
 
 func combineCloseFuncs(closeFns ...func() error) func() error {
@@ -568,6 +615,7 @@ type sharedStorageFlags struct {
 type sharedProviderFlags struct {
 	storage                  sharedStorageFlags
 	model                    *string
+	provider                 *string
 	timeout                  *time.Duration
 	bypassCompressionBarrier *bool
 }
@@ -584,7 +632,8 @@ func bindProviderFlags(flagSet *flag.FlagSet, defaultRoot string) sharedProvider
 	storage := bindStorageFlags(flagSet, defaultRoot)
 	return sharedProviderFlags{
 		storage:                  storage,
-		model:                    flagSet.String("model", "gpt-5.2", "model name"),
+		model:                    flagSet.String("model", "", "model name (default: gpt-5.5 for openai, z-ai/glm-5.1 for openrouter)"),
+		provider:                 flagSet.String("provider", defaultProviderName, "llm provider: openai or openrouter"),
 		timeout:                  flagSet.Duration("timeout", 20*time.Minute, "request timeout (e.g. 45s, 2m)"),
 		bypassCompressionBarrier: flagSet.Bool("bypass-compression-barrier", false, "disable compression barrier middleware"),
 	}
@@ -645,11 +694,20 @@ func loadInteractiveConfig(command Command, defaultRoot string, args []string) (
 		}
 		renderMode = parsedRenderMode
 	}
+	provider, err := parseProviderName(*shared.provider)
+	if err != nil {
+		return Config{}, fmt.Errorf("flag error: %w", err)
+	}
+	model := strings.TrimSpace(*shared.model)
+	if model == "" {
+		model = defaultModelForProvider(provider)
+	}
 	cfg := Config{
 		Command:                  command,
 		Render:                   renderMode,
+		Provider:                 provider,
 		SessionID:                strings.TrimSpace(*sessionID),
-		Model:                    strings.TrimSpace(*shared.model),
+		Model:                    model,
 		Timeout:                  *shared.timeout,
 		EnvFilePath:              strings.TrimSpace(*shared.storage.envFile),
 		FSRoot:                   strings.TrimSpace(*shared.storage.fsRoot),
@@ -676,13 +734,22 @@ func loadChannelListenerConfig(defaultRoot string, args []string) (Config, error
 	if err != nil {
 		return Config{}, fmt.Errorf("flag error: %w", err)
 	}
+	provider, err := parseProviderName(*shared.provider)
+	if err != nil {
+		return Config{}, fmt.Errorf("flag error: %w", err)
+	}
+	model := strings.TrimSpace(*shared.model)
+	if model == "" {
+		model = defaultModelForProvider(provider)
+	}
 	if *telegramPollTimeoutSeconds < 0 {
 		return Config{}, fmt.Errorf("flag error: -telegram-poll-timeout cannot be negative")
 	}
 	return Config{
 		Command:                    CommandChannelListener,
 		Channel:                    channel,
-		Model:                      strings.TrimSpace(*shared.model),
+		Provider:                   provider,
+		Model:                      model,
 		Timeout:                    *shared.timeout,
 		EnvFilePath:                strings.TrimSpace(*shared.storage.envFile),
 		FSRoot:                     strings.TrimSpace(*shared.storage.fsRoot),
@@ -738,11 +805,20 @@ func loadCredentials(cfg Config, envFileValues map[string]string) (CredentialCon
 		return creds, nil
 	}
 
-	openAIAPIKey, err := requiredEnv(openAIAPIKeyEnv, envFileValues)
-	if err != nil {
-		return CredentialConfig{}, fmt.Errorf("credential error: %w", err)
+	switch cfg.Provider {
+	case ProviderOpenRouter:
+		openRouterAPIKey, err := requiredEnv(openRouterAPIKeyEnv, envFileValues)
+		if err != nil {
+			return CredentialConfig{}, fmt.Errorf("credential error: %w", err)
+		}
+		creds.OpenRouterAPIKey = openRouterAPIKey
+	default:
+		openAIAPIKey, err := requiredEnv(openAIAPIKeyEnv, envFileValues)
+		if err != nil {
+			return CredentialConfig{}, fmt.Errorf("credential error: %w", err)
+		}
+		creds.OpenAIAPIKey = openAIAPIKey
 	}
-	creds.OpenAIAPIKey = openAIAPIKey
 
 	if cfg.Command == CommandChannelListener && cfg.Channel == ChannelTelegram && creds.TelegramBotToken == "" {
 		return CredentialConfig{}, fmt.Errorf("credential error: %s is not set", telegramAPIKeyEnv)
@@ -878,6 +954,24 @@ func parseChannelMode(raw string) (ChannelMode, error) {
 		return ChannelTelegram, nil
 	default:
 		return ChannelTelegram, fmt.Errorf("invalid --channel value %q (use telegram)", raw)
+	}
+}
+
+func defaultModelForProvider(provider ProviderName) string {
+	if provider == ProviderOpenRouter {
+		return defaultOpenRouterModel
+	}
+	return defaultOpenAIModel
+}
+
+func parseProviderName(raw string) (ProviderName, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case string(ProviderOpenAI):
+		return ProviderOpenAI, nil
+	case string(ProviderOpenRouter):
+		return ProviderOpenRouter, nil
+	default:
+		return ProviderOpenAI, fmt.Errorf("invalid --provider value %q (use openai or openrouter)", raw)
 	}
 }
 

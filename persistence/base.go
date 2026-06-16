@@ -7,11 +7,11 @@ import (
 )
 
 type SessionState struct {
-	Provider           providers.ProviderType
-	SessionID          string
-	PreviousResponseID string
-	RemainingTokens    *int64
-	UpdatedAtUnix      int64
+	Provider         providers.ProviderType
+	SessionID        string
+	PreviousResponse string
+	RemainingTokens  *int64
+	UpdatedAtUnix    int64
 }
 
 type SessionStore interface {

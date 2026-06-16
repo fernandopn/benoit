@@ -54,8 +54,8 @@ func (s *sessionStoreStub) UpdateSession(_ context.Context, state persistence.Se
 	state.SessionID = session.NormalizeSessionID(state.SessionID)
 	key := s.key(state.Provider, state.SessionID)
 	if existing, ok := s.byKey[key]; ok {
-		if state.PreviousResponseID == "" {
-			state.PreviousResponseID = existing.PreviousResponseID
+		if state.PreviousResponse == "" {
+			state.PreviousResponse = existing.PreviousResponse
 		}
 		if state.RemainingTokens == nil {
 			state.RemainingTokens = existing.RemainingTokens
@@ -83,7 +83,7 @@ func (s *sessionStoreStub) key(providerType providers.ProviderType, sessionID st
 
 type cursorProviderStub struct {
 	mu            sync.Mutex
-	previousID    string
+	previous      string
 	chatMsgs      []providers.Msg
 	compressionID string
 }
@@ -98,7 +98,7 @@ func (p *cursorProviderStub) Chat(_ context.Context, _ string) <-chan providers.
 func (p *cursorProviderStub) PerformCompression(_ context.Context, _ string, _ providers.Compressor) (string, error) {
 	p.mu.Lock()
 	if p.compressionID != "" {
-		p.previousID = p.compressionID
+		p.previous = p.compressionID
 	}
 	p.mu.Unlock()
 	return "summary", nil
@@ -112,16 +112,17 @@ func (p *cursorProviderStub) Name() string {
 	return "cursor-stub"
 }
 
-func (p *cursorProviderStub) PreviousResponseID() string {
+func (p *cursorProviderStub) ExportPreviousResponse() (string, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	return p.previousID
+	return p.previous, nil
 }
 
-func (p *cursorProviderStub) SetPreviousResponseID(previousResponseID string) {
+func (p *cursorProviderStub) ImportPreviousResponse(serialized string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.previousID = previousResponseID
+	p.previous = serialized
+	return nil
 }
 
 func streamMsgs(msgs ...providers.Msg) <-chan providers.Msg {
@@ -139,8 +140,8 @@ func drain(ch <-chan providers.Msg) {
 }
 
 func TestSessionStoreMiddlewareUpdatesFromChatFinal(t *testing.T) {
-	provider := &cursorProviderStub{chatMsgs: []providers.Msg{
-		{Type: providers.MsgTypeChatFinal, Value: "ok", Metadata: map[string]string{"response_id": "resp-1", "tokens_remaining": "77"}},
+	provider := &cursorProviderStub{previous: "resp-1", chatMsgs: []providers.Msg{
+		{Type: providers.MsgTypeChatFinal, Value: "ok", Metadata: map[string]string{"tokens_remaining": "77"}},
 	}}
 	store := &sessionStoreStub{}
 	wrapped := NewSessionStoreMiddleware(provider, store, providers.ProviderTypeOpenAI, "session-1")
@@ -154,8 +155,8 @@ func TestSessionStoreMiddlewareUpdatesFromChatFinal(t *testing.T) {
 	if !found {
 		t.Fatal("expected session state to be stored")
 	}
-	if state.PreviousResponseID != "resp-1" {
-		t.Fatalf("unexpected previous_response_id: %q", state.PreviousResponseID)
+	if state.PreviousResponse != "resp-1" {
+		t.Fatalf("unexpected previous_response: %q", state.PreviousResponse)
 	}
 	if state.RemainingTokens == nil || *state.RemainingTokens != 77 {
 		t.Fatalf("unexpected remaining tokens: %#v", state.RemainingTokens)
@@ -178,14 +179,14 @@ func TestSessionStoreMiddlewareUpdatesAfterCompression(t *testing.T) {
 	if !found {
 		t.Fatal("expected session state update after compression")
 	}
-	if state.PreviousResponseID != "seed-response" {
-		t.Fatalf("unexpected previous_response_id: %q", state.PreviousResponseID)
+	if state.PreviousResponse != "seed-response" {
+		t.Fatalf("unexpected previous_response: %q", state.PreviousResponse)
 	}
 }
 
 func TestSessionStoreMiddlewareSurfacesChatPersistenceErrors(t *testing.T) {
-	provider := &cursorProviderStub{chatMsgs: []providers.Msg{
-		{Type: providers.MsgTypeChatFinal, Value: "ok", Metadata: map[string]string{"response_id": "resp-1"}},
+	provider := &cursorProviderStub{previous: "resp-1", chatMsgs: []providers.Msg{
+		{Type: providers.MsgTypeChatFinal, Value: "ok"},
 	}}
 	store := &sessionStoreStub{updateErr: errors.New("db unavailable")}
 	wrapped := NewSessionStoreMiddleware(provider, store, providers.ProviderTypeOpenAI, "session-1")

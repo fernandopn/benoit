@@ -25,10 +25,10 @@ func TestSessionStoreUpdateAndGet(t *testing.T) {
 
 	remaining := int64(321)
 	if err := store.UpdateSession(context.Background(), SessionState{
-		Provider:           providers.ProviderTypeOpenAI,
-		SessionID:          "session-1",
-		PreviousResponseID: "resp-1",
-		RemainingTokens:    &remaining,
+		Provider:         providers.ProviderTypeOpenAI,
+		SessionID:        "session-1",
+		PreviousResponse: "resp-1",
+		RemainingTokens:  &remaining,
 	}); err != nil {
 		t.Fatalf("update session: %v", err)
 	}
@@ -40,8 +40,8 @@ func TestSessionStoreUpdateAndGet(t *testing.T) {
 	if !found {
 		t.Fatal("expected session state to exist")
 	}
-	if state.PreviousResponseID != "resp-1" {
-		t.Fatalf("unexpected previous_response_id: %q", state.PreviousResponseID)
+	if state.PreviousResponse != "resp-1" {
+		t.Fatalf("unexpected previous_response: %q", state.PreviousResponse)
 	}
 	if state.RemainingTokens == nil || *state.RemainingTokens != 321 {
 		t.Fatalf("unexpected remaining tokens: %#v", state.RemainingTokens)
@@ -65,19 +65,19 @@ func TestSessionStoreUpdateMergesMissingFields(t *testing.T) {
 
 	remaining := int64(321)
 	if err := store.UpdateSession(context.Background(), SessionState{
-		Provider:           providers.ProviderTypeOpenAI,
-		SessionID:          "session-merge-1",
-		PreviousResponseID: "resp-1",
-		RemainingTokens:    &remaining,
+		Provider:         providers.ProviderTypeOpenAI,
+		SessionID:        "session-merge-1",
+		PreviousResponse: "resp-1",
+		RemainingTokens:  &remaining,
 	}); err != nil {
 		t.Fatalf("seed update session: %v", err)
 	}
 
 	if err := store.UpdateSession(context.Background(), SessionState{
-		Provider:           providers.ProviderTypeOpenAI,
-		SessionID:          "session-merge-1",
-		PreviousResponseID: "",
-		RemainingTokens:    nil,
+		Provider:         providers.ProviderTypeOpenAI,
+		SessionID:        "session-merge-1",
+		PreviousResponse: "",
+		RemainingTokens:  nil,
 	}); err != nil {
 		t.Fatalf("merge update session: %v", err)
 	}
@@ -89,8 +89,8 @@ func TestSessionStoreUpdateMergesMissingFields(t *testing.T) {
 	if !found {
 		t.Fatal("expected session state to exist")
 	}
-	if state.PreviousResponseID != "resp-1" {
-		t.Fatalf("unexpected previous_response_id: %q", state.PreviousResponseID)
+	if state.PreviousResponse != "resp-1" {
+		t.Fatalf("unexpected previous_response: %q", state.PreviousResponse)
 	}
 	if state.RemainingTokens == nil || *state.RemainingTokens != 321 {
 		t.Fatalf("unexpected remaining tokens: %#v", state.RemainingTokens)

@@ -486,6 +486,35 @@ func TestLoadSSHConfigMatchesTUISharedFlags(t *testing.T) {
 	}
 }
 
+func TestLoadInteractiveConfigProviderModelDefaults(t *testing.T) {
+	openAICfg, err := loadTUIConfig("/tmp/benoit", []string{})
+	if err != nil {
+		t.Fatalf("unexpected openai default error: %v", err)
+	}
+	if openAICfg.Provider != ProviderOpenAI {
+		t.Fatalf("expected default provider openai, got %q", openAICfg.Provider)
+	}
+	if openAICfg.Model != defaultOpenAIModel {
+		t.Fatalf("expected default openai model %q, got %q", defaultOpenAIModel, openAICfg.Model)
+	}
+
+	openRouterCfg, err := loadTUIConfig("/tmp/benoit", []string{"-provider", "openrouter"})
+	if err != nil {
+		t.Fatalf("unexpected openrouter default error: %v", err)
+	}
+	if openRouterCfg.Model != defaultOpenRouterModel {
+		t.Fatalf("expected default openrouter model %q, got %q", defaultOpenRouterModel, openRouterCfg.Model)
+	}
+
+	explicitCfg, err := loadTUIConfig("/tmp/benoit", []string{"-provider", "openrouter", "-model", "custom/model"})
+	if err != nil {
+		t.Fatalf("unexpected explicit model error: %v", err)
+	}
+	if explicitCfg.Model != "custom/model" {
+		t.Fatalf("expected explicit model to be preserved, got %q", explicitCfg.Model)
+	}
+}
+
 func TestLoadTUIConfigSessionIDFlag(t *testing.T) {
 	cfg, err := loadTUIConfig("/tmp/benoit", []string{"-session-id", "session-123"})
 	if err != nil {

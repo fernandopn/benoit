@@ -73,10 +73,12 @@ type OpenAI struct {
 }
 
 type OpenAIProviderParams struct {
-	ReasoningEffort    shared.ReasoningEffort
-	ReasoningSummary   shared.ReasoningSummary
-	SessionID          string
-	PreviousResponseID string
+	ReasoningEffort  shared.ReasoningEffort
+	ReasoningSummary shared.ReasoningSummary
+	SessionID        string
+	// PreviousResponse is the serialized-JSON session cursor (see
+	// SessionCursorProvider). Empty when starting a fresh session.
+	PreviousResponse string
 }
 
 type OpenAIParams = OpenAIProviderParams
@@ -130,7 +132,9 @@ func newOpenAI(model string, apiKey string, params OpenAIProviderParams, toolSet
 		toolRunner: parallelToolRunner{},
 		params:     params,
 	}
-	provider.state.set(params.PreviousResponseID)
+	if err := provider.ImportPreviousResponse(params.PreviousResponse); err != nil {
+		return nil, err
+	}
 	provider.maxContextTokens = provider.contextTokensForModel(provider.model)
 	if err := provider.initTools(toolSet); err != nil {
 		return nil, err
@@ -213,16 +217,37 @@ func (b *OpenAI) SessionID() string {
 	return b.sessionID
 }
 
-func (s *OpenAI) PreviousResponseID() string {
-	return s.state.get()
+// OpenAIPreviousResponse is the OpenAI session cursor: the Responses API
+// response id used to chain turns server-side.
+type OpenAIPreviousResponse struct {
+	ResponseID string `json:"response_id"`
 }
 
-func (s *OpenAI) SetPreviousResponseID(previousResponseID string) {
-	previousResponseID = strings.TrimSpace(previousResponseID)
-	if previousResponseID == "" {
-		return
+func (OpenAIPreviousResponse) isPreviousResponse() {}
+
+func (s *OpenAI) ExportPreviousResponse() (string, error) {
+	id := s.state.get()
+	if id == "" {
+		return "", nil
 	}
-	s.state.set(previousResponseID)
+	encoded, err := json.Marshal(OpenAIPreviousResponse{ResponseID: id})
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
+}
+
+func (s *OpenAI) ImportPreviousResponse(serialized string) error {
+	serialized = strings.TrimSpace(serialized)
+	if serialized == "" {
+		return nil
+	}
+	var previous OpenAIPreviousResponse
+	if err := json.Unmarshal([]byte(serialized), &previous); err != nil {
+		return err
+	}
+	s.state.set(previous.ResponseID)
+	return nil
 }
 
 type compressionUsageSnapshot struct {
@@ -578,9 +603,6 @@ func (s *OpenAI) Chat(ctx context.Context, input string) <-chan Msg {
 			if response == nil {
 				return
 			}
-			if response.ID != "" {
-				s.state.set(response.ID)
-			}
 			toolOutputs, err := s.toolOutputsFromResponse(ctx, response, out)
 			if err != nil {
 				out <- Msg{Type: MsgTypeError, Value: err.Error()}
@@ -624,6 +646,9 @@ func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNe
 		return completed, err
 	}
 
+	if completed != nil && completed.ID != "" {
+		s.state.set(completed.ID)
+	}
 	emitFinalStreamMessages(out, completed, chatDelta.String(), reasoningDelta.String(), s.finalMessageMetadata(completed, previousResponseID))
 	return completed, nil
 }

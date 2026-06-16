@@ -1,13 +1,15 @@
 # Benoit
 
-Minimal terminal chat client for the OpenAI Responses API using the official Go SDK. It reads a line at a time from stdin, streams the assistant response, and keeps multi-turn context by reusing the previous response ID.
+Minimal terminal chat client built with the official OpenAI Go SDK. It reads a line at a time from stdin, streams the assistant response, and keeps multi-turn context. The backend is selected with `-provider`: `openai` (default, Responses API, chained via the previous response id) or `openrouter` (OpenAI-compatible Chat Completions API, stateless, so the full history is kept locally and resent each turn). The per-session cursor is persisted as serialized JSON in the `previous_response` column for both providers.
 
 ## Requirements
 - Go 1.25+
-- `OPENAI_API_KEY` environment variable set to a valid key
+- A provider API key for provider commands, depending on `-provider`:
+ - `OPENAI_API_KEY` for `-provider openai` (default)
+ - `OPENROUTER_API_KEY` for `-provider openrouter`
 - Optional integrations:
-  - `MATON_API_KEY` enables Maton tools
-  - `TELEGRAM_API_KEY` is required only for `-tui telegram`
+ - `MATON_API_KEY` enables Maton tools
+ - `TELEGRAM_API_KEY` is required only for `-tui telegram`
 
 ## Build
 1. Fetch dependencies:

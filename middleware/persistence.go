@@ -95,27 +95,25 @@ func (m *SessionStoreMiddleware) captureMessage(ctx context.Context, msg provide
 	if ctx == nil {
 		return errors.New("context is required")
 	}
-	responseID := strings.TrimSpace(msg.Metadata["response_id"])
 	remaining := remainingTokensFromMsg(msg)
-	shouldUpdate := false
+	previousResponse := ""
 	switch msg.Type {
-	case providers.MsgTypeChatFinal:
-		shouldUpdate = responseID != "" || remaining != nil
+	case providers.MsgTypeChatFinal, providers.MsgTypeCompressionStatus:
+		previousResponse = m.exportPreviousResponse()
 	case providers.MsgTypeContextUsage:
-		shouldUpdate = remaining != nil
-	case providers.MsgTypeCompressionStatus:
-		shouldUpdate = responseID != "" || remaining != nil
+		// Context usage only carries token counts; the cursor is persisted on
+		// chat/compression messages above.
 	default:
 		return nil
 	}
-	if !shouldUpdate {
+	if previousResponse == "" && remaining == nil {
 		return nil
 	}
 	return m.store.UpdateSession(ctx, persistence.SessionState{
-		Provider:           m.providerType,
-		SessionID:          m.sessionID,
-		PreviousResponseID: responseID,
-		RemainingTokens:    remaining,
+		Provider:         m.providerType,
+		SessionID:        m.sessionID,
+		PreviousResponse: previousResponse,
+		RemainingTokens:  remaining,
 	})
 }
 
@@ -126,19 +124,27 @@ func (m *SessionStoreMiddleware) syncSessionFromProvider(ctx context.Context) er
 	if ctx == nil {
 		return errors.New("context is required")
 	}
-	cursorProvider, ok := m.provider.(providers.SessionCursorProvider)
-	if !ok {
-		return nil
-	}
-	previousID := strings.TrimSpace(cursorProvider.PreviousResponseID())
-	if previousID == "" {
+	previousResponse := m.exportPreviousResponse()
+	if previousResponse == "" {
 		return nil
 	}
 	return m.store.UpdateSession(ctx, persistence.SessionState{
-		Provider:           m.providerType,
-		SessionID:          m.sessionID,
-		PreviousResponseID: previousID,
+		Provider:         m.providerType,
+		SessionID:        m.sessionID,
+		PreviousResponse: previousResponse,
 	})
+}
+
+func (m *SessionStoreMiddleware) exportPreviousResponse() string {
+	cursorProvider, ok := m.provider.(providers.SessionCursorProvider)
+	if !ok {
+		return ""
+	}
+	serialized, err := cursorProvider.ExportPreviousResponse()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(serialized)
 }
 
 func singleErrorMsgStream(errText string) <-chan providers.Msg {

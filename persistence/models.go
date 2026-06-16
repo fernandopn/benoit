@@ -12,7 +12,7 @@ type SessionStateModel struct {
 	bun.BaseModel    `bun:"table:session_state"`
 	Provider         int    `bun:"provider,pk,notnull"`
 	SessionID        string `bun:"session_id,pk,notnull"`
-	PreviousResponse string `bun:"previous_response_id,notnull,default:''"`
+	PreviousResponse string `bun:"previous_response,notnull,default:''"`
 	RemainingTokens  *int64 `bun:"remaining_tokens"`
 	UpdatedAtUnix    int64  `bun:"updated_at,notnull"`
 }

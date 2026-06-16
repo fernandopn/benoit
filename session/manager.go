@@ -14,6 +14,7 @@ import (
 type Config struct {
 	Model                string
 	OpenAIAPIKey         string
+	ProviderType         providers.ProviderType
 	OpenAIProviderParams providers.OpenAIProviderParams
 	SessionLookup        PreviousResponseLookup
 	MiddlewareFactories  []MiddlewareFactory
@@ -57,6 +58,10 @@ func newProviderFactory(ctx context.Context, cfg Config, toolSet []tools.Tool, s
 	}
 	middlewares := make([]MiddlewareFactory, 0, len(cfg.MiddlewareFactories))
 	middlewares = append(middlewares, cfg.MiddlewareFactories...)
+	providerType := cfg.ProviderType
+	if providerType == providers.ProviderTypeUnknown {
+		providerType = providers.ProviderTypeOpenAI
+	}
 	return &providerFactory{
 		ctx:           ctx,
 		cfg:           cfg,
@@ -65,16 +70,26 @@ func newProviderFactory(ctx context.Context, cfg Config, toolSet []tools.Tool, s
 		middleware:    middlewares,
 		providerFn:    providerFn,
 		entries:       map[string]sessionProviderEntry{},
-		provider:      providers.ProviderTypeOpenAI,
+		provider:      providerType,
 	}
 }
 
 func (f *providerFactory) Name() string {
+	label := providerLabel(f.provider)
 	model := strings.TrimSpace(f.cfg.Model)
 	if model == "" {
+		return label
+	}
+	return label + " " + model
+}
+
+func providerLabel(providerType providers.ProviderType) string {
+	switch providerType {
+	case providers.ProviderTypeOpenRouter:
+		return "OpenRouter"
+	default:
 		return "OpenAI"
 	}
-	return "OpenAI " + model
 }
 
 func (f *providerFactory) providerForSession(sessionID string) (providers.Provider, error) {
@@ -108,12 +123,12 @@ func (f *providerFactory) createProvider(sessionID string) (providers.Provider, 
 	params := f.cfg.OpenAIProviderParams
 	params.SessionID = sessionID
 	if f.sessionLookup != nil {
-		previousID, found, err := f.sessionLookup.PreviousResponseID(f.ctx, f.provider, sessionID)
+		previousResponse, found, err := f.sessionLookup.PreviousResponse(f.ctx, f.provider, sessionID)
 		if err != nil {
 			return nil, nil, err
 		}
 		if found {
-			params.PreviousResponseID = strings.TrimSpace(previousID)
+			params.PreviousResponse = strings.TrimSpace(previousResponse)
 		}
 	}
 

@@ -96,14 +96,14 @@ func (s *BunSessionStore) UpdateSession(ctx context.Context, state SessionState)
 	model := &SessionStateModel{
 		Provider:         int(state.Provider),
 		SessionID:        normalizedSessionID,
-		PreviousResponse: strings.TrimSpace(state.PreviousResponseID),
+		PreviousResponse: strings.TrimSpace(state.PreviousResponse),
 		RemainingTokens:  state.RemainingTokens,
 		UpdatedAtUnix:    updatedAt,
 	}
 
 	_, err := s.db.NewInsert().Model(model).
 		On("CONFLICT (provider, session_id) DO UPDATE").
-		Set("previous_response_id = CASE WHEN EXCLUDED.previous_response_id = '' THEN previous_response_id ELSE EXCLUDED.previous_response_id END").
+		Set("previous_response = CASE WHEN EXCLUDED.previous_response = '' THEN previous_response ELSE EXCLUDED.previous_response END").
 		Set("remaining_tokens = COALESCE(EXCLUDED.remaining_tokens, remaining_tokens)").
 		Set("updated_at = EXCLUDED.updated_at").
 		Exec(ctx)
@@ -128,10 +128,10 @@ func sessionStateFromModel(model *SessionStateModel) SessionState {
 		return SessionState{}
 	}
 	return SessionState{
-		Provider:           providers.ProviderType(model.Provider),
-		SessionID:          model.SessionID,
-		PreviousResponseID: model.PreviousResponse,
-		RemainingTokens:    model.RemainingTokens,
-		UpdatedAtUnix:      model.UpdatedAtUnix,
+		Provider:         providers.ProviderType(model.Provider),
+		SessionID:        model.SessionID,
+		PreviousResponse: model.PreviousResponse,
+		RemainingTokens:  model.RemainingTokens,
+		UpdatedAtUnix:    model.UpdatedAtUnix,
 	}
 }

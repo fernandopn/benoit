@@ -15,12 +15,15 @@ type ProviderType int
 const (
 	ProviderTypeUnknown ProviderType = iota
 	ProviderTypeOpenAI
+	ProviderTypeOpenRouter
 )
 
 func (providerType ProviderType) String() string {
 	switch providerType {
 	case ProviderTypeOpenAI:
 		return "openai"
+	case ProviderTypeOpenRouter:
+		return "openrouter"
 	default:
 		return "unknown"
 	}
@@ -245,9 +248,18 @@ func NotifyCompressionStatusSent(provider Provider, sessionID string) {
 	notifier.NotifyCompressionStatusSent(strings.TrimSpace(sessionID))
 }
 
-// SessionCursorProvider exposes mutable session response cursor so
-// persistence middleware can hydrate and synchronize provider state.
+// PreviousResponse is a provider-specific session cursor that is serialized to
+// JSON for persistence. OpenAI stores a response id; stateless providers such as
+// OpenRouter store the full conversation history.
+type PreviousResponse interface {
+	isPreviousResponse()
+}
+
+// SessionCursorProvider exposes the provider's session cursor as JSON so
+// persistence middleware can hydrate and synchronize it across restarts.
 type SessionCursorProvider interface {
-	PreviousResponseID() string
-	SetPreviousResponseID(previousResponseID string)
+	// ExportPreviousResponse serializes the current cursor ("" when empty).
+	ExportPreviousResponse() (string, error)
+	// ImportPreviousResponse restores a cursor produced by ExportPreviousResponse.
+	ImportPreviousResponse(serialized string) error
 }

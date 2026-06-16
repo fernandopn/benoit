@@ -1,12 +1,19 @@
 # benoit
 
-Minimal terminal chat client for the OpenAI Responses API built with the
-official Go SDK.
+Minimal terminal chat client built with the official OpenAI Go SDK. It supports
+two backends selected with `-provider`:
+
+- `openai` (default): the OpenAI Responses API, which chains turns server-side
+  with a response id.
+- `openrouter`: the OpenAI-compatible Chat Completions API at
+  `https://openrouter.ai/api/v1`. OpenRouter is stateless, so the full
+  conversation history is kept locally and resent on each request.
 
 ## Run
 
 - `OPENAI_API_KEY=... go run . tui --render simple`
 - `OPENAI_API_KEY=... MATON_API_KEY=... go run . tui --render bubbletea`
+- `OPENROUTER_API_KEY=... go run . tui -provider openrouter` (defaults to `z-ai/glm-5.1`)
 - `go run . tui --env-file .env --render simple`
 - `go run . ssh --env-file .env`
 - `OPENAI_API_KEY=... SSH_ALLOWED_PUBLIC_KEYS="<key1>,<key2>" go run . ssh`
@@ -24,7 +31,10 @@ official Go SDK.
 ### `tui`
 
 - `-model`
-  - default: `gpt-5.2`
+  - default: `gpt-5.5` for `-provider openai`, `z-ai/glm-5.1` for `-provider openrouter`
+- `-provider`
+  - LLM provider: `openai` or `openrouter`
+  - default: `openai`
 - `-timeout` request timeout (for example: `45s`, `2m`)
   - default: `20m`
 - `-fs-root`
@@ -52,7 +62,8 @@ official Go SDK.
 ### `ssh`
 
 - Same core provider flags as `tui`:
-  - `-model` (default: `gpt-5.2`)
+  - `-model` (default: `gpt-5.5` for openai, `z-ai/glm-5.1` for openrouter)
+  - `-provider` LLM provider: `openai` or `openrouter` (default: `openai`)
   - `-timeout` request timeout (for example: `45s`, `2m`) (default: `20m`)
   - `-fs-root` filesystem sandbox root for file tools; if omitted, file tools are not registered (default: current working directory)
   - `-db-path` database path used for provider trace logging and per-session state (default: `db.sqlite`)
@@ -73,7 +84,10 @@ official Go SDK.
 - `--channel`
   - channel listener type (`telegram`)
 - `-model`
-  - default: `gpt-5.2`
+  - default: `gpt-5.5` for `-provider openai`, `z-ai/glm-5.1` for `-provider openrouter`
+- `-provider`
+  - LLM provider: `openai` or `openrouter`
+  - default: `openai`
 - `-timeout` request timeout (for example: `45s`, `2m`)
   - default: `20m`
 - `-fs-root`
@@ -106,7 +120,10 @@ official Go SDK.
 
 ## Behavior notes
 
-- Credentials are loaded in `main.go` during startup: `OPENAI_API_KEY` (required for provider commands), `MATON_API_KEY` (optional), and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools).
+- The active backend is chosen with `-provider` (`openai` by default, or `openrouter`).
+- Credentials are loaded in `main.go` during startup. The provider API key required for provider commands depends on `-provider`: `OPENAI_API_KEY` for `openai` and `OPENROUTER_API_KEY` for `openrouter`. `MATON_API_KEY` (optional) and `TELEGRAM_API_KEY` (required for `channel_listener --channel telegram`, optional otherwise to enable channel messaging tools) are loaded regardless of provider.
+- The per-session cursor is stored as serialized JSON in the `previous_response` column: for `openai` it holds the Responses API response id, and for `openrouter` it holds the full conversation history so sessions resume across restarts. OpenAI and OpenRouter sessions are tracked separately because state is keyed by `(provider, session_id)`.
+- The built-in OpenAI-hosted tools (`code_interpreter`, `web_search`) are not available with `-provider openrouter` because they cannot be called over the Chat Completions API; they are skipped, while local function tools (`get_time`, file tools, Maton, channel messaging) work unchanged.
 - When `-env-file` is set (or default `.env` exists), values in that file are checked before process environment variables.
 - Telegram allowlist is loaded from `TELEGRAM_ALLOWED_USERS` (comma-separated user IDs); empty means deny all.
 - SSH allowlist is loaded from `SSH_ALLOWED_PUBLIC_KEYS` (comma-separated authorized public keys); required for `ssh` command.
