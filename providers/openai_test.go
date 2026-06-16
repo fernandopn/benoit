@@ -122,10 +122,10 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 	msg1 := <-out
 	msg2 := <-out
 
-	if msg1.Type != MsgTypeToolCall || msg1.Metadata["call_id"] != "call-1" {
+	if msg1.Type != MsgTypeToolCall || msg1.ToolCall == nil || msg1.ToolCall.CallID != "call-1" {
 		t.Fatalf("unexpected msg1: %#v", msg1)
 	}
-	if msg2.Type != MsgTypeToolCall || msg2.Metadata["call_id"] != "call-2" {
+	if msg2.Type != MsgTypeToolCall || msg2.ToolCall == nil || msg2.ToolCall.CallID != "call-2" {
 		t.Fatalf("unexpected msg2: %#v", msg2)
 	}
 
@@ -133,7 +133,7 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 
 	select {
 	case msg := <-out:
-		if msg.Type != MsgTypeToolResult || msg.Metadata["call_id"] != "call-2" {
+		if msg.Type != MsgTypeToolResult || msg.ToolCall == nil || msg.ToolCall.CallID != "call-2" {
 			t.Fatalf("unexpected tool result after releasing tool_b: %#v", msg)
 		}
 	case <-time.After(2 * time.Second):
@@ -144,7 +144,7 @@ func TestToolOutputsFromResponseParallelAndOrdered(t *testing.T) {
 
 	select {
 	case msg := <-out:
-		if msg.Type != MsgTypeToolResult || msg.Metadata["call_id"] != "call-1" {
+		if msg.Type != MsgTypeToolResult || msg.ToolCall == nil || msg.ToolCall.CallID != "call-1" {
 			t.Fatalf("unexpected tool result after releasing tool_a: %#v", msg)
 		}
 	case <-time.After(2 * time.Second):
@@ -317,20 +317,20 @@ func TestOpenAIContextUsageMsgUsesInputTokens(t *testing.T) {
 	if msg.Value != "12.3%" {
 		t.Fatalf("unexpected context usage value: %q", msg.Value)
 	}
-	if got := msg.Metadata["tokens_used"]; got != "123" {
-		t.Fatalf("unexpected tokens_used: %q", got)
+	if msg.Usage == nil {
+		t.Fatal("expected typed usage payload")
 	}
-	if got := msg.Metadata["tokens_input_used"]; got != "123" {
-		t.Fatalf("unexpected tokens_input_used: %q", got)
+	if msg.Usage.InputTokensUsed != 123 {
+		t.Fatalf("unexpected input tokens used: %d", msg.Usage.InputTokensUsed)
 	}
-	if got := msg.Metadata["tokens_output_used"]; got != "45" {
-		t.Fatalf("unexpected tokens_output_used: %q", got)
+	if msg.Usage.OutputTokensUsed != 45 {
+		t.Fatalf("unexpected output tokens used: %d", msg.Usage.OutputTokensUsed)
 	}
-	if got := msg.Metadata["tokens_total_used"]; got != "168" {
-		t.Fatalf("unexpected tokens_total_used: %q", got)
+	if msg.Usage.TotalTokensUsed != 168 {
+		t.Fatalf("unexpected total tokens used: %d", msg.Usage.TotalTokensUsed)
 	}
-	if got := msg.Metadata["tokens_available"]; got != "1000" {
-		t.Fatalf("unexpected tokens_available: %q", got)
+	if msg.Usage.ContextWindow != 1000 {
+		t.Fatalf("unexpected context window: %d", msg.Usage.ContextWindow)
 	}
 }
 
@@ -507,17 +507,20 @@ func TestOpenAIPerformCompressionResetsAndSeedsSession(t *testing.T) {
 	if statusMsg.Value != "Context compressed from 28000 (93.0% left) to 24000 (94.0% left)." {
 		t.Fatalf("unexpected compression status text: %q", statusMsg.Value)
 	}
-	if statusMsg.Metadata["from_tokens_used"] != "28000" {
-		t.Fatalf("unexpected from_tokens_used: %q", statusMsg.Metadata["from_tokens_used"])
+	if statusMsg.Compaction == nil {
+		t.Fatal("expected typed compaction payload")
 	}
-	if statusMsg.Metadata["to_tokens_used"] != "24000" {
-		t.Fatalf("unexpected to_tokens_used: %q", statusMsg.Metadata["to_tokens_used"])
+	if statusMsg.Compaction.FromTokensUsed != 28000 {
+		t.Fatalf("unexpected from tokens used: %d", statusMsg.Compaction.FromTokensUsed)
 	}
-	if statusMsg.Metadata["from_left_percent"] != "93.0" {
-		t.Fatalf("unexpected from_left_percent: %q", statusMsg.Metadata["from_left_percent"])
+	if statusMsg.Compaction.ToTokensUsed != 24000 {
+		t.Fatalf("unexpected to tokens used: %d", statusMsg.Compaction.ToTokensUsed)
 	}
-	if statusMsg.Metadata["to_left_percent"] != "94.0" {
-		t.Fatalf("unexpected to_left_percent: %q", statusMsg.Metadata["to_left_percent"])
+	if statusMsg.Compaction.FromPercentLeft != 93.0 {
+		t.Fatalf("unexpected from percent left: %v", statusMsg.Compaction.FromPercentLeft)
+	}
+	if statusMsg.Compaction.ToPercentLeft != 94.0 {
+		t.Fatalf("unexpected to percent left: %v", statusMsg.Compaction.ToPercentLeft)
 	}
 
 	if len(client.params) != 2 {

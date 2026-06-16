@@ -140,8 +140,9 @@ func drain(ch <-chan providers.Msg) {
 }
 
 func TestSessionStoreMiddlewareUpdatesFromChatFinal(t *testing.T) {
+	remaining := int64(77)
 	provider := &cursorProviderStub{previous: "resp-1", chatMsgs: []providers.Msg{
-		{Type: providers.MsgTypeChatFinal, Value: "ok", Metadata: map[string]string{"tokens_remaining": "77"}},
+		{Type: providers.MsgTypeChatFinal, Value: "ok", Final: &providers.FinalInfo{RemainingTokens: &remaining}},
 	}}
 	store := &sessionStoreStub{}
 	wrapped := NewSessionStoreMiddleware(provider, store, providers.ProviderTypeOpenAI, "session-1")
@@ -196,8 +197,8 @@ func TestSessionStoreMiddlewareSurfacesChatPersistenceErrors(t *testing.T) {
 		if msg.Type != providers.MsgTypeError {
 			continue
 		}
-		if msg.Metadata["component"] != "persistence" || msg.Metadata["phase"] != "update_session" {
-			t.Fatalf("unexpected error metadata: %#v", msg.Metadata)
+		if msg.Extra["component"] != "persistence" || msg.Extra["phase"] != "update_session" {
+			t.Fatalf("unexpected error extra: %#v", msg.Extra)
 		}
 		if !strings.Contains(msg.Value, "db unavailable") {
 			t.Fatalf("unexpected error value: %q", msg.Value)

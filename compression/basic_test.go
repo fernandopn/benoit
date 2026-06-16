@@ -206,9 +206,11 @@ func TestBasicCompressionSetsContextUsageTarget(t *testing.T) {
 		return msgStream(
 			providers.Msg{
 				Type: providers.MsgTypeContextUsage,
-				Metadata: map[string]string{
-					"tokens_input_used": "24000",
-					"tokens_available":  "400000",
+				Usage: &providers.ContextUsage{
+					InputTokensUsed: 24000,
+					ContextWindow:   400000,
+					TokensAvailable: 376000,
+					PercentUsed:     6,
 				},
 			},
 			providers.Msg{Type: providers.MsgTypeChatFinal, Value: "summary"},
@@ -228,7 +230,7 @@ func TestBasicCompressionSetsContextUsageTarget(t *testing.T) {
 	if usage.Type != providers.MsgTypeContextUsage {
 		t.Fatalf("expected context usage message, got %#v", usage)
 	}
-	if usage.Metadata["tokens_input_used"] != "24000" {
-		t.Fatalf("unexpected tokens_input_used: %q", usage.Metadata["tokens_input_used"])
+	if usage.Usage == nil || usage.Usage.InputTokensUsed != 24000 {
+		t.Fatalf("unexpected usage: %#v", usage.Usage)
 	}
 }

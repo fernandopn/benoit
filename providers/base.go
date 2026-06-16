@@ -62,9 +62,47 @@ func (msgType MsgType) StorageValue() string {
 
 // Msg represents a message emitted by a provider.
 type Msg struct {
-	Type     MsgType
-	Value    string
-	Metadata map[string]string
+	Type       MsgType
+	Value      string
+	Usage      *ContextUsage     // set when Type == MsgTypeContextUsage
+	ToolCall   *ToolCallInfo     // set when Type == MsgTypeToolCall or MsgTypeToolResult
+	Compaction *CompactionStatus // set when Type == MsgTypeCompressionStatus
+	Final      *FinalInfo        // set when Type == MsgTypeChatFinal
+	Extra      map[string]string // genuinely free-form annotations
+}
+
+// ContextUsage carries token accounting for a context usage message.
+type ContextUsage struct {
+	InputTokensUsed  int64   `json:"input_tokens_used"`
+	OutputTokensUsed int64   `json:"output_tokens_used"`
+	TotalTokensUsed  int64   `json:"total_tokens_used"`
+	ContextWindow    int64   `json:"context_window"`
+	TokensAvailable  int64   `json:"tokens_available"`
+	PercentUsed      float64 `json:"percent_used"`
+}
+
+// ToolCallInfo identifies the tool associated with a tool call or result.
+type ToolCallInfo struct {
+	Name   string `json:"name"`
+	CallID string `json:"call_id"`
+}
+
+// CompactionStatus describes a context compaction transition.
+type CompactionStatus struct {
+	FromTokensUsed      int64   `json:"from_tokens_used"`
+	FromTokensAvailable int64   `json:"from_tokens_available"`
+	FromPercentLeft     float64 `json:"from_percent_left"`
+	ToTokensUsed        int64   `json:"to_tokens_used"`
+	ToTokensAvailable   int64   `json:"to_tokens_available"`
+	ToPercentLeft       float64 `json:"to_percent_left"`
+	ResponseID          string  `json:"response_id,omitempty"`
+}
+
+// FinalInfo carries session cursor and token accounting for a final message.
+type FinalInfo struct {
+	ResponseID         string `json:"response_id,omitempty"`
+	PreviousResponseID string `json:"previous_response_id,omitempty"`
+	RemainingTokens    *int64 `json:"remaining_tokens,omitempty"`
 }
 
 // Compressor produces a compressed summary for a provider session.
@@ -208,36 +246,35 @@ func PerformCompressionWithStatus(ctx context.Context, provider Provider, sessio
 }
 
 func contextUsageFromCompressionStatus(status Msg) (Msg, bool) {
-	if status.Metadata == nil {
+	if status.Compaction == nil {
 		return Msg{}, false
 	}
-	used := strings.TrimSpace(status.Metadata["to_tokens_used"])
-	if used == "" {
-		used = strings.TrimSpace(status.Metadata["tokens_input_used"])
-	}
-	if used == "" {
-		used = strings.TrimSpace(status.Metadata["tokens_used"])
-	}
-	available := strings.TrimSpace(status.Metadata["to_tokens_available"])
-	if available == "" {
-		available = strings.TrimSpace(status.Metadata["tokens_available"])
-	}
-	if used == "" || available == "" {
+	used := status.Compaction.ToTokensUsed
+	available := status.Compaction.ToTokensAvailable
+	if available <= 0 {
 		return Msg{}, false
 	}
+	return Msg{Type: MsgTypeContextUsage, Usage: newContextUsage(used, available, 0, 0)}, true
+}
 
-	metadata := map[string]string{
-		"tokens_used":       used,
-		"tokens_input_used": used,
-		"tokens_available":  available,
+// newContextUsage builds a ContextUsage from raw token counts, computing
+// PercentUsed and TokensAvailable once. window is the full context window.
+func newContextUsage(inputUsed int64, window int64, outputUsed int64, totalUsed int64) *ContextUsage {
+	usage := &ContextUsage{
+		InputTokensUsed:  inputUsed,
+		OutputTokensUsed: outputUsed,
+		TotalTokensUsed:  totalUsed,
+		ContextWindow:    window,
 	}
-	if output := strings.TrimSpace(status.Metadata["to_tokens_output_used"]); output != "" {
-		metadata["tokens_output_used"] = output
+	if window > 0 {
+		remaining := window - inputUsed
+		if remaining < 0 {
+			remaining = 0
+		}
+		usage.TokensAvailable = remaining
+		usage.PercentUsed = (float64(inputUsed) / float64(window)) * 100
 	}
-	if total := strings.TrimSpace(status.Metadata["to_tokens_total_used"]); total != "" {
-		metadata["tokens_total_used"] = total
-	}
-	return Msg{Type: MsgTypeContextUsage, Metadata: metadata}, true
+	return usage
 }
 
 func NotifyCompressionStatusSent(provider Provider, sessionID string) {

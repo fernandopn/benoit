@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -321,7 +320,7 @@ func (o *OpenRouter) Chat(ctx context.Context, input string) <-chan Msg {
 			o.state.append(result.assistantMessage())
 
 			if len(result.toolCalls) == 0 {
-				emitFinalChatMessages(out, result.content, result.reasoning, o.finalMessageMetadata(result))
+				emitFinalChatMessages(out, result.content, result.reasoning, o.finalMessageInfo(result))
 				o.emitContextUsage(result, out)
 				return
 			}
@@ -473,12 +472,9 @@ func (o *OpenRouter) runToolCalls(ctx context.Context, calls []chatToolCall, out
 	}
 	for _, call := range toolCalls {
 		out <- Msg{
-			Type:  MsgTypeToolCall,
-			Value: call.raw,
-			Metadata: map[string]string{
-				"tool":    call.name,
-				"call_id": call.callID,
-			},
+			Type:     MsgTypeToolCall,
+			Value:    call.raw,
+			ToolCall: &ToolCallInfo{Name: call.name, CallID: call.callID},
 		}
 	}
 
@@ -500,12 +496,9 @@ func (o *OpenRouter) runToolCalls(ctx context.Context, calls []chatToolCall, out
 			return
 		}
 		out <- Msg{
-			Type:  MsgTypeToolResult,
-			Value: result.output,
-			Metadata: map[string]string{
-				"tool":    call.name,
-				"call_id": call.callID,
-			},
+			Type:     MsgTypeToolResult,
+			Value:    result.output,
+			ToolCall: &ToolCallInfo{Name: call.name, CallID: call.callID},
 		}
 	})
 
@@ -588,12 +581,12 @@ func assistantMessageToParam(message chatMessage) openai.ChatCompletionMessagePa
 	return openai.ChatCompletionMessageParamUnion{OfAssistant: &assistant}
 }
 
-func emitFinalChatMessages(out chan<- Msg, content string, reasoning string, metadata map[string]string) {
-	emitFinalMessage(out, MsgTypeChatFinal, content, "", metadata)
+func emitFinalChatMessages(out chan<- Msg, content string, reasoning string, final *FinalInfo) {
+	emitFinalMessage(out, MsgTypeChatFinal, content, "", final)
 	emitFinalMessage(out, MsgTypeReasoningSummaryFinal, reasoning, "", nil)
 }
 
-func (o *OpenRouter) finalMessageMetadata(result chatCompletionResult) map[string]string {
+func (o *OpenRouter) finalMessageInfo(result chatCompletionResult) *FinalInfo {
 	if !result.hasUsage || o.maxContextTokens <= 0 {
 		return nil
 	}
@@ -601,7 +594,7 @@ func (o *OpenRouter) finalMessageMetadata(result chatCompletionResult) map[strin
 	if remaining < 0 {
 		remaining = 0
 	}
-	return map[string]string{"tokens_remaining": strconv.FormatInt(remaining, 10)}
+	return &FinalInfo{RemainingTokens: &remaining}
 }
 
 func (o *OpenRouter) emitContextUsage(result chatCompletionResult, out chan<- Msg) {
@@ -612,19 +605,12 @@ func (o *OpenRouter) emitContextUsage(result chatCompletionResult, out chan<- Ms
 	if used < 0 {
 		used = 0
 	}
-	metadata := map[string]string{
-		"tokens_used":        strconv.FormatInt(used, 10),
-		"tokens_input_used":  strconv.FormatInt(used, 10),
-		"tokens_output_used": strconv.FormatInt(result.usage.CompletionTokens, 10),
-		"tokens_total_used":  strconv.FormatInt(result.usage.TotalTokens, 10),
-	}
+	usage := newContextUsage(used, o.maxContextTokens, result.usage.CompletionTokens, result.usage.TotalTokens)
 	value := ""
 	if o.maxContextTokens > 0 {
-		metadata["tokens_available"] = strconv.FormatInt(o.maxContextTokens, 10)
-		percentage := (float64(used) / float64(o.maxContextTokens)) * 100
-		value = fmt.Sprintf("%.1f%%", percentage)
+		value = fmt.Sprintf("%.1f%%", usage.PercentUsed)
 	}
-	out <- Msg{Type: MsgTypeContextUsage, Value: value, Metadata: metadata}
+	out <- Msg{Type: MsgTypeContextUsage, Value: value, Usage: usage}
 }
 
 func (o *OpenRouter) PerformCompression(ctx context.Context, sessionID string, compressor Compressor) (string, error) {

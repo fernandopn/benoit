@@ -12,12 +12,12 @@ import (
 
 func TestApplyStreamMessagesMergesToolResultIntoCallBlock(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "glob", "call_id": "call-1"}
+	info := &providers.ToolCallInfo{Name: "glob", CallID: "call-1"}
 
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolCall,
 		Value:    `{"path":"./src","recursive":false}`,
-		Metadata: meta,
+		ToolCall: info,
 	}})
 
 	initialToolCount := countToolBlocks(m.blocks)
@@ -28,7 +28,7 @@ func TestApplyStreamMessagesMergesToolResultIntoCallBlock(t *testing.T) {
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolResult,
 		Value:    "src/a.go\nsrc/b.go",
-		Metadata: meta,
+		ToolCall: info,
 	}})
 
 	finalToolCount := countToolBlocks(m.blocks)
@@ -56,12 +56,12 @@ func TestApplyStreamMessagesMergesToolResultIntoCallBlock(t *testing.T) {
 
 func TestApplyStreamMessagesMarksPendingToolError(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "glob", "call_id": "call-err"}
+	info := &providers.ToolCallInfo{Name: "glob", CallID: "call-err"}
 
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolCall,
 		Value:    `{"path":"./src"}`,
-		Metadata: meta,
+		ToolCall: info,
 	}})
 	if !m.hasPendingToolResults() {
 		t.Fatalf("expected pending tool results after tool call")
@@ -245,10 +245,10 @@ func TestAppendToolCallCreatesToolBlockForUnknownCallID(t *testing.T) {
 
 func TestAppendToolCallAppendsToMatchingCallBlock(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"call_id": "call-1", "tool": "glob"}
+	info := &providers.ToolCallInfo{CallID: "call-1", Name: "glob"}
 
-	m.appendToolCall(`{"path":"/src"}`, meta)
-	m.appendToolCall(`{"depth":2}`, meta)
+	m.appendToolCall(`{"path":"/src"}`, info)
+	m.appendToolCall(`{"depth":2}`, info)
 
 	if countToolBlocks(m.blocks) != 1 {
 		t.Fatalf("expected one tool block for matching call, got %d", countToolBlocks(m.blocks))
@@ -261,8 +261,8 @@ func TestAppendToolCallAppendsToMatchingCallBlock(t *testing.T) {
 
 func TestAppendToolResultForUnknownCallIDCreatesNewBlock(t *testing.T) {
 	m := newTestModel()
-	m.appendToolCall(`{"path":"/src"}`, map[string]string{"call_id": "call-known", "tool": "glob"})
-	m.appendToolResult("cached", map[string]string{"call_id": "call-unknown", "tool": "glob"})
+	m.appendToolCall(`{"path":"/src"}`, &providers.ToolCallInfo{CallID: "call-known", Name: "glob"})
+	m.appendToolResult("cached", &providers.ToolCallInfo{CallID: "call-unknown", Name: "glob"})
 
 	if countToolBlocks(m.blocks) != 2 {
 		t.Fatalf("expected second tool block for unknown call id, got %d", countToolBlocks(m.blocks))
@@ -278,12 +278,12 @@ func TestAppendToolResultForUnknownCallIDCreatesNewBlock(t *testing.T) {
 
 func TestApplyStreamMessagesEmptyToolResultStillCompletesBlock(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "glob", "call_id": "call-empty"}
+	info := &providers.ToolCallInfo{Name: "glob", CallID: "call-empty"}
 
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolCall,
 		Value:    `{"path":"/","pattern":"**/*"}`,
-		Metadata: meta,
+		ToolCall: info,
 	}})
 
 	if !m.hasPendingToolResults() {
@@ -293,7 +293,7 @@ func TestApplyStreamMessagesEmptyToolResultStillCompletesBlock(t *testing.T) {
 	m.applyStreamMessages([]providers.Msg{{
 		Type:     providers.MsgTypeToolResult,
 		Value:    "",
-		Metadata: meta,
+		ToolCall: info,
 	}})
 
 	if m.hasPendingToolResults() {
@@ -314,11 +314,11 @@ func TestApplyStreamMessagesEmptyToolResultStillCompletesBlock(t *testing.T) {
 
 func TestAppendToolCallDoesNotRevertCompletedEmptyResultToPending(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "glob", "call_id": "call-reappend"}
+	info := &providers.ToolCallInfo{Name: "glob", CallID: "call-reappend"}
 
-	m.appendToolCall(`{"path":"/"}`, meta)
-	m.appendToolResult("", meta)
-	m.appendToolCall(`{"pattern":"*"}`, meta)
+	m.appendToolCall(`{"path":"/"}`, info)
+	m.appendToolResult("", info)
+	m.appendToolCall(`{"pattern":"*"}`, info)
 
 	toolBlock := latestToolBlock(m.blocks)
 	if toolBlock == nil {
@@ -334,9 +334,9 @@ func TestAppendToolCallDoesNotRevertCompletedEmptyResultToPending(t *testing.T) 
 
 func TestSyncToolSpinnerStopsWhenEmptyResultArrives(t *testing.T) {
 	m := newTestModel()
-	meta := map[string]string{"tool": "glob", "call_id": "call-spinner"}
+	info := &providers.ToolCallInfo{Name: "glob", CallID: "call-spinner"}
 
-	m.appendToolCall(`{"path":"/","pattern":"**/*"}`, meta)
+	m.appendToolCall(`{"path":"/","pattern":"**/*"}`, info)
 	if !m.hasPendingToolResults() {
 		t.Fatalf("expected pending tool before result")
 	}
@@ -347,7 +347,7 @@ func TestSyncToolSpinnerStopsWhenEmptyResultArrives(t *testing.T) {
 		t.Fatalf("expected spinner to be active while pending")
 	}
 
-	m.appendToolResult("", meta)
+	m.appendToolResult("", info)
 	if m.hasPendingToolResults() {
 		t.Fatalf("expected pending tool to clear after empty result")
 	}

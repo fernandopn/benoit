@@ -80,9 +80,11 @@ func (p *promptCaptureProvider) Chat(_ context.Context, input string) <-chan pro
 	return testMsgStream(
 		providers.Msg{
 			Type: providers.MsgTypeContextUsage,
-			Metadata: map[string]string{
-				"tokens_input_used": "24000",
-				"tokens_available":  "400000",
+			Usage: &providers.ContextUsage{
+				InputTokensUsed: 24000,
+				ContextWindow:   400000,
+				TokensAvailable: 376000,
+				PercentUsed:     6,
 			},
 		},
 		providers.Msg{Type: providers.MsgTypeChatFinal, Value: "summary"},
@@ -193,12 +195,13 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 		compressionStat: providers.Msg{
 			Type:  providers.MsgTypeCompressionStatus,
 			Value: "Context compressed from 43200 (89.2% left) to 21000 (94.8% left).",
-			Metadata: map[string]string{
-				"from_tokens_used":      "43200",
-				"to_tokens_used":        "21000",
-				"to_tokens_available":   "400000",
-				"to_left_percent":       "94.8",
-				"from_tokens_available": "400000",
+			Compaction: &providers.CompactionStatus{
+				FromTokensUsed:      43200,
+				FromTokensAvailable: 400000,
+				FromPercentLeft:     89.2,
+				ToTokensUsed:        21000,
+				ToTokensAvailable:   400000,
+				ToPercentLeft:       94.8,
 			},
 		},
 	}
@@ -220,14 +223,14 @@ func TestStreamStartForProviderUsesCompressionCommand(t *testing.T) {
 	if msgs[0].Type != providers.MsgTypeCompressionStatus || msgs[0].Value != "Context compressed from 43200 (89.2% left) to 21000 (94.8% left)." {
 		t.Fatalf("unexpected first message: %#v", msgs[0])
 	}
-	if msgs[0].Metadata["from_tokens_used"] != "43200" || msgs[0].Metadata["to_tokens_used"] != "21000" {
-		t.Fatalf("unexpected compression status metadata: %#v", msgs[0].Metadata)
+	if msgs[0].Compaction == nil || msgs[0].Compaction.FromTokensUsed != 43200 || msgs[0].Compaction.ToTokensUsed != 21000 {
+		t.Fatalf("unexpected compression status payload: %#v", msgs[0].Compaction)
 	}
 	if msgs[1].Type != providers.MsgTypeContextUsage {
 		t.Fatalf("unexpected second message: %#v", msgs[1])
 	}
-	if msgs[1].Metadata["tokens_input_used"] != "21000" || msgs[1].Metadata["tokens_available"] != "400000" {
-		t.Fatalf("unexpected context usage metadata: %#v", msgs[1].Metadata)
+	if msgs[1].Usage == nil || msgs[1].Usage.InputTokensUsed != 21000 || msgs[1].Usage.ContextWindow != 400000 {
+		t.Fatalf("unexpected context usage payload: %#v", msgs[1].Usage)
 	}
 	if msgs[2].Type != providers.MsgTypeChatDelta || msgs[2].Value != "compressed summary" {
 		t.Fatalf("unexpected third message: %#v", msgs[2])
@@ -260,8 +263,8 @@ func TestStreamStartForProviderCompressParsesWordLimit(t *testing.T) {
 	if msgs[1].Type != providers.MsgTypeContextUsage {
 		t.Fatalf("unexpected second command message: %#v", msgs[1])
 	}
-	if msgs[1].Metadata["tokens_input_used"] != "24000" || msgs[1].Metadata["tokens_available"] != "400000" {
-		t.Fatalf("unexpected second command metadata: %#v", msgs[1].Metadata)
+	if msgs[1].Usage == nil || msgs[1].Usage.InputTokensUsed != 24000 || msgs[1].Usage.ContextWindow != 400000 {
+		t.Fatalf("unexpected second command usage: %#v", msgs[1].Usage)
 	}
 	if msgs[2].Type != providers.MsgTypeChatDelta || msgs[2].Value != "summary" {
 		t.Fatalf("unexpected third command message: %#v", msgs[2])

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -257,17 +256,12 @@ type compressionUsageSnapshot struct {
 }
 
 func (s *compressionUsageSnapshot) capture(msg Msg) {
-	if msg.Type != MsgTypeContextUsage || msg.Metadata == nil {
+	if msg.Type != MsgTypeContextUsage || msg.Usage == nil {
 		return
 	}
-	usedRaw := strings.TrimSpace(msg.Metadata["tokens_input_used"])
-	if usedRaw == "" {
-		usedRaw = strings.TrimSpace(msg.Metadata["tokens_used"])
-	}
-	availableRaw := strings.TrimSpace(msg.Metadata["tokens_available"])
-	used, usedOK := parseInt64Loose(usedRaw)
-	available, availableOK := parseInt64Loose(availableRaw)
-	if !usedOK || !availableOK || available <= 0 || used < 0 {
+	used := msg.Usage.InputTokensUsed
+	available := msg.Usage.ContextWindow
+	if available <= 0 || used < 0 {
 		return
 	}
 	s.usedTokens = used
@@ -331,13 +325,13 @@ func compressionStatusMsg(before compressionUsageSnapshot, after compressionUsag
 			after.usedTokens,
 			afterLeft,
 		),
-		Metadata: map[string]string{
-			"from_tokens_used":      strconv.FormatInt(before.usedTokens, 10),
-			"from_tokens_available": strconv.FormatInt(before.availableTokens, 10),
-			"from_left_percent":     fmt.Sprintf("%.1f", beforeLeft),
-			"to_tokens_used":        strconv.FormatInt(after.usedTokens, 10),
-			"to_tokens_available":   strconv.FormatInt(after.availableTokens, 10),
-			"to_left_percent":       fmt.Sprintf("%.1f", afterLeft),
+		Compaction: &CompactionStatus{
+			FromTokensUsed:      before.usedTokens,
+			FromTokensAvailable: before.availableTokens,
+			FromPercentLeft:     beforeLeft,
+			ToTokensUsed:        after.usedTokens,
+			ToTokensAvailable:   after.availableTokens,
+			ToPercentLeft:       afterLeft,
 		},
 	}, true
 }
@@ -374,11 +368,8 @@ func (s *OpenAI) PerformCompression(ctx context.Context, sessionID string, compr
 		return "", err
 	}
 	if statusMsg, ok := compressionStatusMsg(beforeUsage, afterUsage); ok {
-		if seededResponseID = strings.TrimSpace(seededResponseID); seededResponseID != "" {
-			if statusMsg.Metadata == nil {
-				statusMsg.Metadata = map[string]string{}
-			}
-			statusMsg.Metadata["response_id"] = seededResponseID
+		if seededResponseID = strings.TrimSpace(seededResponseID); seededResponseID != "" && statusMsg.Compaction != nil {
+			statusMsg.Compaction.ResponseID = seededResponseID
 		}
 		SetCompressionStatus(ctx, statusMsg)
 	}
@@ -399,8 +390,8 @@ func (s *OpenAI) seedCompressedContext(ctx context.Context, sessionID string, co
 	}
 	for msg := range stream {
 		usage.capture(msg)
-		if msg.Type == MsgTypeChatFinal {
-			if responseID := strings.TrimSpace(msg.Metadata["response_id"]); responseID != "" {
+		if msg.Type == MsgTypeChatFinal && msg.Final != nil {
+			if responseID := strings.TrimSpace(msg.Final.ResponseID); responseID != "" {
 				seededResponseID = responseID
 			}
 		}
@@ -430,12 +421,9 @@ func (b *OpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Re
 	}
 	for _, call := range toolCalls {
 		out <- Msg{
-			Type:  MsgTypeToolCall,
-			Value: call.raw,
-			Metadata: map[string]string{
-				"tool":    call.name,
-				"call_id": call.callID,
-			},
+			Type:     MsgTypeToolCall,
+			Value:    call.raw,
+			ToolCall: &ToolCallInfo{Name: call.name, CallID: call.callID},
 		}
 	}
 
@@ -457,12 +445,9 @@ func (b *OpenAI) toolOutputsFromResponse(ctx context.Context, resp *responses.Re
 			return
 		}
 		out <- Msg{
-			Type:  MsgTypeToolResult,
-			Value: result.output,
-			Metadata: map[string]string{
-				"tool":    call.name,
-				"call_id": call.callID,
-			},
+			Type:     MsgTypeToolResult,
+			Value:    result.output,
+			ToolCall: &ToolCallInfo{Name: call.name, CallID: call.callID},
 		}
 	})
 	outputs := make(responses.ResponseInputParam, 0, len(toolCalls))
@@ -506,19 +491,6 @@ func (b *OpenAI) contextTokensForModel(model string) int64 {
 	return 0
 }
 
-func parseInt64Loose(value string) (int64, bool) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, false
-	}
-	value = strings.ReplaceAll(value, ",", "")
-	num, err := strconv.ParseInt(value, 10, 64)
-	if err != nil {
-		return 0, false
-	}
-	return num, true
-}
-
 func contextLeftPercent(usedTokens int64, availableTokens int64) (float64, bool) {
 	if availableTokens <= 0 || usedTokens < 0 {
 		return 0, false
@@ -555,17 +527,11 @@ func (b *OpenAI) contextUsageMsg(resp *responses.Response) *Msg {
 	if !ok {
 		return nil
 	}
-	percentage := (float64(used) / float64(available)) * 100
+	usage := newContextUsage(used, available, output, total)
 	return &Msg{
 		Type:  MsgTypeContextUsage,
-		Value: fmt.Sprintf("%.1f%%", percentage),
-		Metadata: map[string]string{
-			"tokens_used":        strconv.FormatInt(used, 10),
-			"tokens_input_used":  strconv.FormatInt(used, 10),
-			"tokens_output_used": strconv.FormatInt(output, 10),
-			"tokens_total_used":  strconv.FormatInt(total, 10),
-			"tokens_available":   strconv.FormatInt(available, 10),
-		},
+		Value: fmt.Sprintf("%.1f%%", usage.PercentUsed),
+		Usage: usage,
 	}
 }
 
@@ -649,16 +615,16 @@ func (s *OpenAI) streamResponse(ctx context.Context, params responses.ResponseNe
 	if completed != nil && completed.ID != "" {
 		s.state.set(completed.ID)
 	}
-	emitFinalStreamMessages(out, completed, chatDelta.String(), reasoningDelta.String(), s.finalMessageMetadata(completed, previousResponseID))
+	emitFinalStreamMessages(out, completed, chatDelta.String(), reasoningDelta.String(), s.finalMessageInfo(completed, previousResponseID))
 	return completed, nil
 }
 
-func emitFinalStreamMessages(out chan<- Msg, completed *responses.Response, chatDelta string, reasoningDelta string, chatMetadata map[string]string) {
-	emitFinalMessage(out, MsgTypeChatFinal, responseChatText(completed), chatDelta, chatMetadata)
+func emitFinalStreamMessages(out chan<- Msg, completed *responses.Response, chatDelta string, reasoningDelta string, final *FinalInfo) {
+	emitFinalMessage(out, MsgTypeChatFinal, responseChatText(completed), chatDelta, final)
 	emitFinalMessage(out, MsgTypeReasoningSummaryFinal, responseReasoningSummaryText(completed), reasoningDelta, nil)
 }
 
-func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fallback string, metadata map[string]string) {
+func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fallback string, final *FinalInfo) {
 	value := explicit
 	if strings.TrimSpace(value) == "" {
 		value = fallback
@@ -666,41 +632,26 @@ func emitFinalMessage(out chan<- Msg, messageType MsgType, explicit string, fall
 	if strings.TrimSpace(value) == "" {
 		return
 	}
-	out <- Msg{Type: messageType, Value: value, Metadata: copyMsgMetadata(metadata)}
+	out <- Msg{Type: messageType, Value: value, Final: final}
 }
 
-func (s *OpenAI) finalMessageMetadata(resp *responses.Response, previousResponseID string) map[string]string {
-	metadata := map[string]string{}
+func (s *OpenAI) finalMessageInfo(resp *responses.Response, previousResponseID string) *FinalInfo {
+	final := &FinalInfo{}
 	if resp != nil {
-		if responseID := strings.TrimSpace(resp.ID); responseID != "" {
-			metadata["response_id"] = responseID
-		}
+		final.ResponseID = strings.TrimSpace(resp.ID)
 		if used, available, _, _, ok := s.contextUsageMetrics(resp); ok {
 			remaining := available - used
 			if remaining < 0 {
 				remaining = 0
 			}
-			metadata["tokens_remaining"] = strconv.FormatInt(remaining, 10)
+			final.RemainingTokens = &remaining
 		}
 	}
-	if previousResponseID = strings.TrimSpace(previousResponseID); previousResponseID != "" {
-		metadata["previous_response_id"] = previousResponseID
-	}
-	if len(metadata) == 0 {
+	final.PreviousResponseID = strings.TrimSpace(previousResponseID)
+	if final.ResponseID == "" && final.PreviousResponseID == "" && final.RemainingTokens == nil {
 		return nil
 	}
-	return metadata
-}
-
-func copyMsgMetadata(metadata map[string]string) map[string]string {
-	if len(metadata) == 0 {
-		return nil
-	}
-	cloned := make(map[string]string, len(metadata))
-	for key, value := range metadata {
-		cloned[key] = value
-	}
-	return cloned
+	return final
 }
 
 func responseChatText(resp *responses.Response) string {

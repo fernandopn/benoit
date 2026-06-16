@@ -24,9 +24,16 @@ type streamCallbacks struct {
 	OnReasoning         func(string)
 	OnToolCall          func(name string, args string, callID string)
 	OnToolResult        func(name string, args string, output string, callID string)
-	OnContextUsage      func(value string, metadata map[string]string)
-	OnCompressionStatus func(value string, metadata map[string]string)
+	OnContextUsage      func(usage *providers.ContextUsage)
+	OnCompressionStatus func(value string)
 	OnError             func(string)
+}
+
+func contextLeftFromUsage(usage *providers.ContextUsage) (float64, bool) {
+	if usage == nil || usage.ContextWindow <= 0 {
+		return 0, false
+	}
+	return 100 - usage.PercentUsed, true
 }
 
 func streamStartForProvider(provider providers.Provider, sessionID string) streamStarter {
@@ -139,8 +146,12 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 				callbacks.OnReasoning(msg.Value)
 			}
 		case providers.MsgTypeToolCall:
-			callID := strings.TrimSpace(msg.Metadata["call_id"])
-			name := strings.TrimSpace(msg.Metadata["tool"])
+			callID := ""
+			name := ""
+			if msg.ToolCall != nil {
+				callID = strings.TrimSpace(msg.ToolCall.CallID)
+				name = strings.TrimSpace(msg.ToolCall.Name)
+			}
 			args := tuiutils.CompactWhitespace(strings.TrimSpace(msg.Value))
 			if args == "" {
 				args = "{}"
@@ -152,8 +163,12 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 				callbacks.OnToolCall(name, args, callID)
 			}
 		case providers.MsgTypeToolResult:
-			callID := strings.TrimSpace(msg.Metadata["call_id"])
-			name := strings.TrimSpace(msg.Metadata["tool"])
+			callID := ""
+			name := ""
+			if msg.ToolCall != nil {
+				callID = strings.TrimSpace(msg.ToolCall.CallID)
+				name = strings.TrimSpace(msg.ToolCall.Name)
+			}
 			args := "{}"
 			if callID != "" {
 				if call, ok := pending[callID]; ok {
@@ -162,11 +177,6 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 					}
 					args = call.args
 					delete(pending, callID)
-				}
-			}
-			if args == "{}" {
-				if rawArgs := strings.TrimSpace(msg.Metadata["args"]); rawArgs != "" {
-					args = tuiutils.CompactWhitespace(rawArgs)
 				}
 			}
 			output := strings.TrimSpace(msg.Value)
@@ -178,11 +188,11 @@ func streamPrompt(ctx context.Context, prompt string, timeout time.Duration, sta
 			}
 		case providers.MsgTypeContextUsage:
 			if callbacks.OnContextUsage != nil {
-				callbacks.OnContextUsage(msg.Value, msg.Metadata)
+				callbacks.OnContextUsage(msg.Usage)
 			}
 		case providers.MsgTypeCompressionStatus:
 			if callbacks.OnCompressionStatus != nil {
-				callbacks.OnCompressionStatus(msg.Value, msg.Metadata)
+				callbacks.OnCompressionStatus(msg.Value)
 			}
 		case providers.MsgTypeError:
 			errText := strings.TrimSpace(msg.Value)

@@ -20,7 +20,6 @@ import (
 	"github.com/fernandopn/benoit/session"
 	bubbleteaui "github.com/fernandopn/benoit/tui/bubbletea"
 	tuicmd "github.com/fernandopn/benoit/tui/commands"
-	tuiutils "github.com/fernandopn/benoit/tui/utils"
 	gossh "golang.org/x/crypto/ssh"
 )
 
@@ -270,15 +269,14 @@ func runSimpleSSHSession(ctx context.Context, sess ssh.Session, provider provide
 				writeSimpleToolCard(writer, colors, width, name, args, output)
 				_ = writer.Flush()
 			},
-			OnContextUsage: func(value string, metadata map[string]string) {
+			OnContextUsage: func(usage *providers.ContextUsage) {
 				switchState(providers.MsgTypeContextUsage)
-				if left, ok := tuiutils.ContextLeftPercent(value, metadata); ok {
+				if left, ok := contextLeftFromUsage(usage); ok {
 					fmt.Fprintln(writer, colors.Style(formatContextLeft(left), colors.FGAccent, colors.Dim))
 				}
 				_ = writer.Flush()
 			},
-			OnCompressionStatus: func(value string, metadata map[string]string) {
-				_ = metadata
+			OnCompressionStatus: func(value string) {
 				switchState(providers.MsgTypeCompressionStatus)
 				fmt.Fprintln(writer, colors.Style(value, colors.FGAccent, colors.Dim))
 				_ = writer.Flush()

@@ -138,8 +138,8 @@ func TestPersistTracePropagatesStorageErrors(t *testing.T) {
 	for msg := range out {
 		if msg.Type == providers.MsgTypeError {
 			seenError = true
-			if msg.Metadata["component"] != "persistence" {
-				t.Fatalf("unexpected metadata: %#v", msg.Metadata)
+			if msg.Extra["component"] != "persistence" {
+				t.Fatalf("unexpected extra: %#v", msg.Extra)
 			}
 		}
 	}

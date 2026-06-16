@@ -3,10 +3,12 @@ package bubbletea
 import (
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/fernandopn/benoit/providers"
 )
 
 func (m model) View() string {
@@ -79,24 +81,14 @@ func (m model) headerLine() string {
 	return line
 }
 
-func (m *model) updateContextUsage(value string, meta map[string]string) {
-	left, ok := contextLeftPercent(value, meta)
-	if !ok {
+func (m *model) updateContextUsage(usage *providers.ContextUsage) {
+	if usage == nil || usage.ContextWindow <= 0 {
 		return
 	}
-	m.contextLeftPercent = clampPercent(left)
+	m.contextLeftPercent = clampPercent(100 - usage.PercentUsed)
 	m.contextLeftKnown = true
-	m.contextTokensUsed = ""
-	m.contextTokensTotal = ""
-
-	if meta == nil {
-		return
-	}
-	m.contextTokensUsed = strings.TrimSpace(meta["tokens_input_used"])
-	if m.contextTokensUsed == "" {
-		m.contextTokensUsed = strings.TrimSpace(meta["tokens_used"])
-	}
-	m.contextTokensTotal = strings.TrimSpace(meta["tokens_available"])
+	m.contextTokensUsed = strconv.FormatInt(usage.InputTokensUsed, 10)
+	m.contextTokensTotal = strconv.FormatInt(usage.ContextWindow, 10)
 }
 
 func (m model) footerLine() string {

@@ -104,28 +104,47 @@ func (s *PersistTrace) storeReceived(ctx context.Context, msg providers.Msg) err
 	if s.store == nil {
 		return nil
 	}
-	metadata := "{}"
-	if len(msg.Metadata) > 0 {
-		if encoded, err := json.Marshal(msg.Metadata); err == nil {
-			metadata = string(encoded)
-		}
-	}
 	record := &persistence.TraceMessageModel{
 		Provider:  int(s.providerType),
 		SessionID: s.sessionID,
 		MsgType:   msg.Type.StorageValue(),
 		Value:     msg.Value,
-		Metadata:  metadata,
+		Metadata:  metadataJSON(msg),
 	}
 	err := s.store.InsertMessage(ctx, record)
 	return err
+}
+
+// metadataJSON serializes the typed payload carried by msg into JSON for the
+// trace store. Serialization happens only at this persistence boundary.
+func metadataJSON(msg providers.Msg) string {
+	var payload any
+	switch {
+	case msg.Usage != nil:
+		payload = msg.Usage
+	case msg.ToolCall != nil:
+		payload = msg.ToolCall
+	case msg.Compaction != nil:
+		payload = msg.Compaction
+	case msg.Final != nil:
+		payload = msg.Final
+	case len(msg.Extra) > 0:
+		payload = msg.Extra
+	}
+	if payload == nil {
+		return "{}"
+	}
+	if encoded, err := json.Marshal(payload); err == nil {
+		return string(encoded)
+	}
+	return "{}"
 }
 
 func storageErrorMsg(phase string, err error) providers.Msg {
 	return providers.Msg{
 		Type:  providers.MsgTypeError,
 		Value: "storage error while " + phase + ": " + err.Error(),
-		Metadata: map[string]string{
+		Extra: map[string]string{
 			"component": "persistence",
 			"phase":     phase,
 		},

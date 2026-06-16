@@ -13,7 +13,6 @@ import (
 	"github.com/fernandopn/benoit/session"
 	tuicmd "github.com/fernandopn/benoit/tui/commands"
 	simpleui "github.com/fernandopn/benoit/tui/simple"
-	tuiutils "github.com/fernandopn/benoit/tui/utils"
 	"golang.org/x/term"
 )
 
@@ -103,15 +102,14 @@ func RunSimple(ctx context.Context, provider providers.Provider, timeout time.Du
 				writeSimpleToolCard(writer, colors, width, name, args, output)
 				writer.Flush()
 			},
-			OnContextUsage: func(value string, metadata map[string]string) {
+			OnContextUsage: func(usage *providers.ContextUsage) {
 				switchState(providers.MsgTypeContextUsage)
-				if left, ok := tuiutils.ContextLeftPercent(value, metadata); ok {
+				if left, ok := contextLeftFromUsage(usage); ok {
 					fmt.Fprintln(writer, colors.Style(formatContextLeft(left), colors.FGAccent, colors.Dim))
 				}
 				writer.Flush()
 			},
-			OnCompressionStatus: func(value string, metadata map[string]string) {
-				_ = metadata
+			OnCompressionStatus: func(value string) {
 				switchState(providers.MsgTypeCompressionStatus)
 				fmt.Fprintln(writer, colors.Style(value, colors.FGAccent, colors.Dim))
 				writer.Flush()

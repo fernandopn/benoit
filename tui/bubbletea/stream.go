@@ -70,15 +70,15 @@ func (m *model) applyStreamMessages(msgs []providers.Msg) {
 			// Final messages are emitted for consumers that need complete text.
 			// Bubble Tea already renders deltas incrementally.
 		case providers.MsgTypeToolCall:
-			m.appendToolCall(msg.Value, msg.Metadata)
+			m.appendToolCall(msg.Value, msg.ToolCall)
 		case providers.MsgTypeToolResult:
-			m.appendToolResult(msg.Value, msg.Metadata)
+			m.appendToolResult(msg.Value, msg.ToolCall)
 		case providers.MsgTypeContextUsage:
-			m.updateContextUsage(msg.Value, msg.Metadata)
+			m.updateContextUsage(msg.Usage)
 		case providers.MsgTypeCompressionStatus:
 			status := strings.TrimSpace(msg.Value)
 			if status != "" {
-				m.appendBlock(blockSystem, status, msg.Metadata)
+				m.appendBlock(blockSystem, status, nil)
 			}
 		case providers.MsgTypeError:
 			errText := strings.TrimSpace(msg.Value)
@@ -86,7 +86,7 @@ func (m *model) applyStreamMessages(msgs []providers.Msg) {
 				errText = "provider error"
 			}
 			m.markPendingToolsAsError(errText)
-			m.appendBlock(blockError, errText, msg.Metadata)
+			m.appendBlock(blockError, errText, nil)
 			m.streaming = false
 			m.cancelStreamIfAny()
 		}
@@ -109,12 +109,12 @@ func (m *model) appendToBlock(kind blockKind, text string, meta map[string]strin
 	m.appendBlock(kind, text, meta)
 }
 
-func (m *model) appendToolCall(text string, meta map[string]string) {
+func (m *model) appendToolCall(text string, info *providers.ToolCallInfo) {
 	callID := ""
 	toolName := ""
-	if meta != nil {
-		callID = meta["call_id"]
-		toolName = meta["tool"]
+	if info != nil {
+		callID = info.CallID
+		toolName = info.Name
 	}
 
 	if callID != "" {
@@ -133,7 +133,6 @@ func (m *model) appendToolCall(text string, meta map[string]string) {
 
 	newBlock := block{
 		Kind:      blockToolWidget,
-		Meta:      cloneMeta(meta),
 		ToolArgs:  text,
 		ToolState: toolExecutionPending,
 	}
@@ -144,12 +143,12 @@ func (m *model) appendToolCall(text string, meta map[string]string) {
 	m.blocks = append(m.blocks, newBlock)
 }
 
-func (m *model) appendToolResult(text string, meta map[string]string) {
+func (m *model) appendToolResult(text string, info *providers.ToolCallInfo) {
 	callID := ""
 	toolName := ""
-	if meta != nil {
-		callID = meta["call_id"]
-		toolName = meta["tool"]
+	if info != nil {
+		callID = info.CallID
+		toolName = info.Name
 	}
 
 	if callID != "" {
@@ -167,7 +166,6 @@ func (m *model) appendToolResult(text string, meta map[string]string) {
 
 	newBlock := block{
 		Kind:               blockToolWidget,
-		Meta:               cloneMeta(meta),
 		ToolResult:         text,
 		ToolResultReceived: true,
 		ToolState:          toolExecutionDone,

@@ -25,10 +25,10 @@ func (p *compressionProviderStub) PerformCompression(ctx context.Context, _ stri
 	if p.err != nil {
 		return "", p.err
 	}
-	if p.status.Type != 0 || p.status.Value != "" || len(p.status.Metadata) > 0 {
+	if p.status.Type != 0 || p.status.Value != "" || p.status.Compaction != nil {
 		SetCompressionStatus(ctx, p.status)
 	}
-	if p.contextUsage.Type != 0 || p.contextUsage.Value != "" || len(p.contextUsage.Metadata) > 0 {
+	if p.contextUsage.Type != 0 || p.contextUsage.Value != "" || p.contextUsage.Usage != nil {
 		SetContextUsage(ctx, p.contextUsage)
 	}
 	return p.summary, nil
@@ -92,7 +92,7 @@ func TestPerformCompressionWithStatus(t *testing.T) {
 	if status.Type != MsgTypeCompressionStatus || status.Value != "done" {
 		t.Fatalf("unexpected status: %#v", status)
 	}
-	if contextUsage.Type != 0 || contextUsage.Value != "" || len(contextUsage.Metadata) > 0 {
+	if contextUsage.Type != 0 || contextUsage.Value != "" || contextUsage.Usage != nil {
 		t.Fatalf("did not expect context usage message, got %#v", contextUsage)
 	}
 }
@@ -107,7 +107,7 @@ func TestPerformCompressionWithStatusFallback(t *testing.T) {
 	if status.Type != MsgTypeCompressionStatus || status.Value != DefaultCompressionFinishedMessage {
 		t.Fatalf("unexpected fallback status: %#v", status)
 	}
-	if contextUsage.Type != 0 || contextUsage.Value != "" || len(contextUsage.Metadata) > 0 {
+	if contextUsage.Type != 0 || contextUsage.Value != "" || contextUsage.Usage != nil {
 		t.Fatalf("did not expect context usage message, got %#v", contextUsage)
 	}
 }
@@ -118,10 +118,7 @@ func TestPerformCompressionWithStatusIncludesContextUsage(t *testing.T) {
 		contextUsage: Msg{
 			Type:  MsgTypeContextUsage,
 			Value: "6.0%",
-			Metadata: map[string]string{
-				"tokens_input_used": "24000",
-				"tokens_available":  "400000",
-			},
+			Usage: newContextUsage(24000, 400000, 0, 0),
 		},
 	}
 
@@ -132,8 +129,8 @@ func TestPerformCompressionWithStatusIncludesContextUsage(t *testing.T) {
 	if contextUsage.Type != MsgTypeContextUsage {
 		t.Fatalf("expected context usage message, got %#v", contextUsage)
 	}
-	if contextUsage.Metadata["tokens_input_used"] != "24000" {
-		t.Fatalf("unexpected tokens_input_used: %q", contextUsage.Metadata["tokens_input_used"])
+	if contextUsage.Usage == nil || contextUsage.Usage.InputTokensUsed != 24000 {
+		t.Fatalf("unexpected usage: %#v", contextUsage.Usage)
 	}
 }
 
@@ -143,9 +140,9 @@ func TestPerformCompressionWithStatusInfersContextUsageFromStatus(t *testing.T) 
 		status: Msg{
 			Type:  MsgTypeCompressionStatus,
 			Value: "done",
-			Metadata: map[string]string{
-				"to_tokens_used":      "21000",
-				"to_tokens_available": "400000",
+			Compaction: &CompactionStatus{
+				ToTokensUsed:      21000,
+				ToTokensAvailable: 400000,
 			},
 		},
 	}
@@ -157,11 +154,11 @@ func TestPerformCompressionWithStatusInfersContextUsageFromStatus(t *testing.T) 
 	if contextUsage.Type != MsgTypeContextUsage {
 		t.Fatalf("expected inferred context usage, got %#v", contextUsage)
 	}
-	if contextUsage.Metadata["tokens_input_used"] != "21000" {
-		t.Fatalf("unexpected inferred tokens_input_used: %q", contextUsage.Metadata["tokens_input_used"])
+	if contextUsage.Usage == nil || contextUsage.Usage.InputTokensUsed != 21000 {
+		t.Fatalf("unexpected inferred input tokens: %#v", contextUsage.Usage)
 	}
-	if contextUsage.Metadata["tokens_available"] != "400000" {
-		t.Fatalf("unexpected inferred tokens_available: %q", contextUsage.Metadata["tokens_available"])
+	if contextUsage.Usage.ContextWindow != 400000 {
+		t.Fatalf("unexpected inferred context window: %#v", contextUsage.Usage)
 	}
 }
 

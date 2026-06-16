@@ -214,11 +214,11 @@ func TestOpenRouterChatRunsToolCalls(t *testing.T) {
 	for _, msg := range msgs {
 		switch msg.Type {
 		case MsgTypeToolCall:
-			if msg.Metadata["call_id"] == "call-1" && msg.Metadata["tool"] == "tool_a" {
+			if msg.ToolCall != nil && msg.ToolCall.CallID == "call-1" && msg.ToolCall.Name == "tool_a" {
 				sawToolCall = true
 			}
 		case MsgTypeToolResult:
-			if msg.Value == "result-a" && msg.Metadata["call_id"] == "call-1" {
+			if msg.Value == "result-a" && msg.ToolCall != nil && msg.ToolCall.CallID == "call-1" {
 				sawToolResult = true
 			}
 		case MsgTypeChatFinal:
@@ -278,14 +278,17 @@ func TestOpenRouterContextUsageWithKnownWindow(t *testing.T) {
 	if usage.Value != "12.3%" {
 		t.Fatalf("unexpected context usage value: %q", usage.Value)
 	}
-	if usage.Metadata["tokens_used"] != "123" {
-		t.Fatalf("unexpected tokens_used: %q", usage.Metadata["tokens_used"])
+	if usage.Usage == nil {
+		t.Fatal("expected typed usage payload")
 	}
-	if usage.Metadata["tokens_available"] != "1000" {
-		t.Fatalf("unexpected tokens_available: %q", usage.Metadata["tokens_available"])
+	if usage.Usage.InputTokensUsed != 123 {
+		t.Fatalf("unexpected input tokens used: %d", usage.Usage.InputTokensUsed)
 	}
-	if usage.Metadata["tokens_output_used"] != "45" {
-		t.Fatalf("unexpected tokens_output_used: %q", usage.Metadata["tokens_output_used"])
+	if usage.Usage.ContextWindow != 1000 {
+		t.Fatalf("unexpected context window: %d", usage.Usage.ContextWindow)
+	}
+	if usage.Usage.OutputTokensUsed != 45 {
+		t.Fatalf("unexpected output tokens used: %d", usage.Usage.OutputTokensUsed)
 	}
 }
 
@@ -400,8 +403,8 @@ func TestOpenRouterContextUsageUsesResolvedWindow(t *testing.T) {
 	if usage.Value != "12.3%" {
 		t.Fatalf("unexpected context usage value: %q", usage.Value)
 	}
-	if usage.Metadata["tokens_available"] != "1000" {
-		t.Fatalf("unexpected tokens_available: %q", usage.Metadata["tokens_available"])
+	if usage.Usage == nil || usage.Usage.ContextWindow != 1000 {
+		t.Fatalf("unexpected context window: %#v", usage.Usage)
 	}
 }
 

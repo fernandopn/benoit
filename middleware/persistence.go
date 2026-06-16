@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"errors"
-	"strconv"
 	"strings"
 
 	"github.com/fernandopn/benoit/persistence"
@@ -155,34 +154,25 @@ func singleErrorMsgStream(errText string) <-chan providers.Msg {
 }
 
 func remainingTokensFromMsg(msg providers.Msg) *int64 {
-	if msg.Metadata == nil {
-		return nil
-	}
-	if remainingRaw := strings.TrimSpace(msg.Metadata["tokens_remaining"]); remainingRaw != "" {
-		if remaining, err := strconv.ParseInt(remainingRaw, 10, 64); err == nil {
+	switch msg.Type {
+	case providers.MsgTypeChatFinal:
+		if msg.Final != nil && msg.Final.RemainingTokens != nil {
+			remaining := *msg.Final.RemainingTokens
+			return &remaining
+		}
+	case providers.MsgTypeContextUsage:
+		if msg.Usage != nil && msg.Usage.ContextWindow > 0 {
+			remaining := msg.Usage.TokensAvailable
+			return &remaining
+		}
+	case providers.MsgTypeCompressionStatus:
+		if msg.Compaction != nil && msg.Compaction.ToTokensAvailable > 0 {
+			remaining := msg.Compaction.ToTokensAvailable - msg.Compaction.ToTokensUsed
+			if remaining < 0 {
+				remaining = 0
+			}
 			return &remaining
 		}
 	}
-	usedRaw := strings.TrimSpace(msg.Metadata["tokens_input_used"])
-	if usedRaw == "" {
-		usedRaw = strings.TrimSpace(msg.Metadata["tokens_used"])
-	}
-	availableRaw := strings.TrimSpace(msg.Metadata["tokens_available"])
-	if msg.Type == providers.MsgTypeCompressionStatus {
-		usedRaw = strings.TrimSpace(msg.Metadata["to_tokens_used"])
-		availableRaw = strings.TrimSpace(msg.Metadata["to_tokens_available"])
-	}
-	if usedRaw == "" || availableRaw == "" {
-		return nil
-	}
-	used, usedErr := strconv.ParseInt(usedRaw, 10, 64)
-	available, availableErr := strconv.ParseInt(availableRaw, 10, 64)
-	if usedErr != nil || availableErr != nil || available <= 0 {
-		return nil
-	}
-	remaining := available - used
-	if remaining < 0 {
-		remaining = 0
-	}
-	return &remaining
+	return nil
 }
