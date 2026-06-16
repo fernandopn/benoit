@@ -6,3 +6,7 @@ data/
 
 # Environment files
 .env
+.envrc.local
+
+# direnv / Nix dev environment
+.direnv/
