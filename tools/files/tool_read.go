@@ -6,8 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
+	"github.com/fernandopn/benoit/tools"
 )
 
 const defaultReadLimit = 2000
@@ -30,32 +29,31 @@ func (r *ReadFileTool) Name() string {
 	return "read"
 }
 
-func (r *ReadFileTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        r.Name(),
-			Description: openai.String("Read a file or directory from the filesystem sandbox. Returns numbered lines for files and plain entries for directories."),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					filePathArgName: map[string]any{
-						"type":        "string",
-						"description": "Sandbox file or directory path. Use / as the sandbox root.",
-					},
-					offsetArgName: map[string]any{
-						"type":        "integer",
-						"description": "1-based starting line for file reads",
-					},
-					limitArgName: map[string]any{
-						"type":        "integer",
-						"description": "Maximum number of lines to return (default 2000)",
-					},
+func (r *ReadFileTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{
+		Name:        r.Name(),
+		Description: "Read a file or directory from the filesystem sandbox. Returns numbered lines for files and plain entries for directories.",
+		Parameters: tools.MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				filePathArgName: map[string]any{
+					"type":        "string",
+					"description": "Sandbox file or directory path. Use / as the sandbox root.",
 				},
-				"required":             []string{filePathArgName},
-				"additionalProperties": false,
+				offsetArgName: map[string]any{
+					"type":        "integer",
+					"description": "1-based starting line for file reads",
+				},
+				limitArgName: map[string]any{
+					"type":        "integer",
+					"description": "Maximum number of lines to return (default 2000)",
+				},
 			},
-			Strict: openai.Bool(false),
-		},
+			"required":             []string{filePathArgName},
+			"additionalProperties": false,
+		}),
+		Kind:   tools.ToolKindFunction,
+		Strict: false,
 	}
 }
 

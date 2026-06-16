@@ -6,9 +6,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 const matonGoogleCalendarApp = "google-calendar"
@@ -32,86 +29,85 @@ func (m *MatonGCalendarTool) Name() string {
 	return "maton_gcalendar"
 }
 
-func (m *MatonGCalendarTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        m.Name(),
-			Description: openai.String("Google Calendar via Maton. Actions: list/get calendars, list/get/create/update/patch/delete events, quick add, free/busy, and connection management. For list_events, always pass query.timeMin and query.timeMax (RFC3339) to bound results."),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"action": map[string]any{
-						"type": "string",
-						"enum": []string{
-							"list_calendars",
-							"get_calendar",
-							"list_events",
-							"get_event",
-							"create_event",
-							"update_event",
-							"patch_event",
-							"delete_event",
-							"quick_add_event",
-							"free_busy",
-							"list_connections",
-							"create_connection",
-							"get_connection",
-							"delete_connection",
-						},
-						"description": "Operation to perform",
+func (m *MatonGCalendarTool) Schema() ToolSchema {
+	return ToolSchema{
+		Name:        m.Name(),
+		Description: "Google Calendar via Maton. Actions: list/get calendars, list/get/create/update/patch/delete events, quick add, free/busy, and connection management. For list_events, always pass query.timeMin and query.timeMax (RFC3339) to bound results.",
+		Parameters: MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{
+					"type": "string",
+					"enum": []string{
+						"list_calendars",
+						"get_calendar",
+						"list_events",
+						"get_event",
+						"create_event",
+						"update_event",
+						"patch_event",
+						"delete_event",
+						"quick_add_event",
+						"free_busy",
+						"list_connections",
+						"create_connection",
+						"get_connection",
+						"delete_connection",
 					},
-					"calendar_id": map[string]any{
-						"type":        "string",
-						"description": "Google Calendar ID (for example: primary)",
-					},
-					"event_id": map[string]any{
-						"type":        "string",
-						"description": "Google Calendar event ID",
-					},
-					"connection_id": map[string]any{
-						"type":        "string",
-						"description": "Maton connection ID (also used as Maton-Connection on gateway requests)",
-					},
-					"query": map[string]any{
-						"type":        "object",
-						"description": "Query parameters for the selected action. For list_events, include timeMin and timeMax (RFC3339).",
-						"properties": map[string]any{
-							"timeMin": map[string]any{
-								"type":        "string",
-								"description": "Start of time range for list_events in RFC3339 (inclusive)",
-							},
-							"timeMax": map[string]any{
-								"type":        "string",
-								"description": "End of time range for list_events in RFC3339 (exclusive)",
-							},
-						},
-						"additionalProperties": true,
-					},
-					"event": map[string]any{
-						"type":                 "object",
-						"description":          "Event payload for create/update/patch actions",
-						"additionalProperties": true,
-					},
-					"free_busy": map[string]any{
-						"type":                 "object",
-						"description":          "Body for freeBusy query",
-						"additionalProperties": true,
-					},
-					"text": map[string]any{
-						"type":        "string",
-						"description": "Natural language text for quick add",
-					},
-					"metadata": map[string]any{
-						"type":                 "object",
-						"description":          "Optional metadata for create_connection",
-						"additionalProperties": true,
-					},
+					"description": "Operation to perform",
 				},
-				"required":             []string{"action"},
-				"additionalProperties": false,
+				"calendar_id": map[string]any{
+					"type":        "string",
+					"description": "Google Calendar ID (for example: primary)",
+				},
+				"event_id": map[string]any{
+					"type":        "string",
+					"description": "Google Calendar event ID",
+				},
+				"connection_id": map[string]any{
+					"type":        "string",
+					"description": "Maton connection ID (also used as Maton-Connection on gateway requests)",
+				},
+				"query": map[string]any{
+					"type":        "object",
+					"description": "Query parameters for the selected action. For list_events, include timeMin and timeMax (RFC3339).",
+					"properties": map[string]any{
+						"timeMin": map[string]any{
+							"type":        "string",
+							"description": "Start of time range for list_events in RFC3339 (inclusive)",
+						},
+						"timeMax": map[string]any{
+							"type":        "string",
+							"description": "End of time range for list_events in RFC3339 (exclusive)",
+						},
+					},
+					"additionalProperties": true,
+				},
+				"event": map[string]any{
+					"type":                 "object",
+					"description":          "Event payload for create/update/patch actions",
+					"additionalProperties": true,
+				},
+				"free_busy": map[string]any{
+					"type":                 "object",
+					"description":          "Body for freeBusy query",
+					"additionalProperties": true,
+				},
+				"text": map[string]any{
+					"type":        "string",
+					"description": "Natural language text for quick add",
+				},
+				"metadata": map[string]any{
+					"type":                 "object",
+					"description":          "Optional metadata for create_connection",
+					"additionalProperties": true,
+				},
 			},
-			Strict: openai.Bool(false),
-		},
+			"required":             []string{"action"},
+			"additionalProperties": false,
+		}),
+		Kind:   ToolKindFunction,
+		Strict: false,
 	}
 }
 

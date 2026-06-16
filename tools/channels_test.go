@@ -33,14 +33,17 @@ func TestSendChannelMessageToolNameAndDefinition(t *testing.T) {
 		t.Fatalf("unexpected name: %q", got)
 	}
 
-	def := tool.Definition()
-	if def.OfFunction == nil {
-		t.Fatal("expected function tool definition")
+	schema := tool.Schema()
+	if schema.Kind != ToolKindFunction {
+		t.Fatalf("expected function tool kind, got %q", schema.Kind)
 	}
-	if def.OfFunction.Name != tool.Name() {
-		t.Fatalf("unexpected definition name: %q", def.OfFunction.Name)
+	if schema.Name != tool.Name() {
+		t.Fatalf("unexpected schema name: %q", schema.Name)
 	}
-	params := def.OfFunction.Parameters
+	params, err := schema.ParametersMap()
+	if err != nil {
+		t.Fatalf("parse parameters: %v", err)
+	}
 	properties, ok := params["properties"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected properties map, got %T", params["properties"])

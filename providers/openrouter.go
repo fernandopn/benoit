@@ -11,7 +11,6 @@ import (
 	"github.com/fernandopn/benoit/tools"
 	"github.com/openai/openai-go/v3"
 	"github.com/openai/openai-go/v3/option"
-	"github.com/openai/openai-go/v3/responses"
 	"github.com/openai/openai-go/v3/shared"
 )
 
@@ -232,32 +231,45 @@ func (o *OpenRouter) initTools(toolSet []tools.Tool) error {
 		if tool == nil {
 			continue
 		}
-		definition := tool.Definition()
-		if definition.OfFunction == nil {
-			// Hosted OpenAI tools (code_interpreter, web_search) are not
-			// available over the Chat Completions API; skip them.
+		schema := tool.Schema()
+		if err := schema.Validate(); err != nil {
+			return err
+		}
+		def, ok, err := toChatTool(schema)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			// Hosted tools (for example web_search and code_interpreter) run
+			// server-side and are not exposed over the Chat Completions API.
 			continue
 		}
-		name := strings.TrimSpace(tool.Name())
-		if name == "" {
-			return fmt.Errorf("tool name cannot be empty")
+		if _, exists := o.toolMap[schema.Name]; exists {
+			return fmt.Errorf("duplicate tool name: %s", schema.Name)
 		}
-		if _, exists := o.toolMap[name]; exists {
-			return fmt.Errorf("duplicate tool name: %s", name)
-		}
-		o.toolMap[name] = tool
-		o.toolDefs = append(o.toolDefs, chatCompletionToolFromDefinition(definition.OfFunction))
+		o.toolMap[schema.Name] = tool
+		o.toolDefs = append(o.toolDefs, def)
 	}
 	return nil
 }
 
-func chatCompletionToolFromDefinition(fn *responses.FunctionToolParam) openai.ChatCompletionToolUnionParam {
+// toChatTool adapts a provider-neutral tool schema into a Chat Completions tool
+// param. The bool result reports whether the tool can be exposed over the Chat
+// Completions API: only function tools can, so hosted-tool kinds return false.
+func toChatTool(schema tools.ToolSchema) (openai.ChatCompletionToolUnionParam, bool, error) {
+	if schema.Kind != tools.ToolKindFunction {
+		return openai.ChatCompletionToolUnionParam{}, false, nil
+	}
+	params, err := schema.ParametersMap()
+	if err != nil {
+		return openai.ChatCompletionToolUnionParam{}, false, err
+	}
 	return openai.ChatCompletionFunctionTool(shared.FunctionDefinitionParam{
-		Name:        fn.Name,
-		Description: fn.Description,
-		Strict:      fn.Strict,
-		Parameters:  shared.FunctionParameters(fn.Parameters),
-	})
+		Name:        schema.Name,
+		Description: openai.String(schema.Description),
+		Strict:      openai.Bool(schema.Strict),
+		Parameters:  shared.FunctionParameters(params),
+	}), true, nil
 }
 
 func (o *OpenRouter) ListModels(ctx context.Context) ([]string, error) {

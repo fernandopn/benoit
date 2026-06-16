@@ -3,9 +3,6 @@ package tools
 import (
 	"context"
 	"time"
-
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 // ClockTool provides the current time.
@@ -25,18 +22,17 @@ func (c *ClockTool) Name() string {
 	return "get_time"
 }
 
-func (c *ClockTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        c.Name(),
-			Description: openai.String("Return the current time as a string"),
-			Parameters: map[string]any{
-				"type":                 "object",
-				"properties":           map[string]any{},
-				"additionalProperties": false,
-			},
-			Strict: openai.Bool(true),
-		},
+func (c *ClockTool) Schema() ToolSchema {
+	return ToolSchema{
+		Name:        c.Name(),
+		Description: "Return the current time as a string",
+		Parameters: MustParameters(map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{},
+			"additionalProperties": false,
+		}),
+		Kind:   ToolKindFunction,
+		Strict: true,
 	}
 }
 

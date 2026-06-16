@@ -11,9 +11,12 @@ func TestOpenAICodeInterpreterTool(t *testing.T) {
 	if got := tool.Name(); got != "code_interpreter" {
 		t.Fatalf("unexpected name: %q", got)
 	}
-	def := tool.Definition()
-	if def.OfCodeInterpreter == nil {
-		t.Fatal("expected code_interpreter tool definition")
+	schema := tool.Schema()
+	if schema.Name != "code_interpreter" {
+		t.Fatalf("unexpected schema name: %q", schema.Name)
+	}
+	if schema.Kind != ToolKindHostedCodeInterpreter {
+		t.Fatalf("unexpected kind: %q", schema.Kind)
 	}
 	out, err := tool.Call(context.Background(), map[string]any{})
 	if err != nil {
@@ -29,9 +32,12 @@ func TestOpenAIWebSearchTool(t *testing.T) {
 	if got := tool.Name(); got != "web_search" {
 		t.Fatalf("unexpected name: %q", got)
 	}
-	def := tool.Definition()
-	if def.OfWebSearch == nil {
-		t.Fatal("expected web_search tool definition")
+	schema := tool.Schema()
+	if schema.Name != "web_search" {
+		t.Fatalf("unexpected schema name: %q", schema.Name)
+	}
+	if schema.Kind != ToolKindHostedWebSearch {
+		t.Fatalf("unexpected kind: %q", schema.Kind)
 	}
 	out, err := tool.Call(context.Background(), map[string]any{})
 	if err != nil {

@@ -9,9 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 const matonGoogleMailApp = "google-mail"
@@ -35,87 +32,86 @@ func (m *MatonGmailTool) Name() string {
 	return "maton_gmail"
 }
 
-func (m *MatonGmailTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        m.Name(),
-			Description: openai.String("Gmail via Maton. Actions: list/get messages, send/modify/trash messages, list/get threads, list labels, create/send drafts, get profile, and connection management. For send_message, prefer message.raw as base64url RFC822 with no whitespace. Convenience mode is also supported with message.to/message.subject/message.body (plus optional cc/bcc/content_type), and the tool will generate message.raw."),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"action": map[string]any{
-						"type": "string",
-						"enum": []string{
-							"list_messages",
-							"get_message",
-							"send_message",
-							"list_labels",
-							"list_threads",
-							"get_thread",
-							"modify_message_labels",
-							"trash_message",
-							"create_draft",
-							"send_draft",
-							"get_profile",
-							"list_connections",
-							"create_connection",
-							"get_connection",
-							"delete_connection",
-						},
-						"description": "Operation to perform",
+func (m *MatonGmailTool) Schema() ToolSchema {
+	return ToolSchema{
+		Name:        m.Name(),
+		Description: "Gmail via Maton. Actions: list/get messages, send/modify/trash messages, list/get threads, list labels, create/send drafts, get profile, and connection management. For send_message, prefer message.raw as base64url RFC822 with no whitespace. Convenience mode is also supported with message.to/message.subject/message.body (plus optional cc/bcc/content_type), and the tool will generate message.raw.",
+		Parameters: MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"action": map[string]any{
+					"type": "string",
+					"enum": []string{
+						"list_messages",
+						"get_message",
+						"send_message",
+						"list_labels",
+						"list_threads",
+						"get_thread",
+						"modify_message_labels",
+						"trash_message",
+						"create_draft",
+						"send_draft",
+						"get_profile",
+						"list_connections",
+						"create_connection",
+						"get_connection",
+						"delete_connection",
 					},
-					"message_id": map[string]any{
-						"type":        "string",
-						"description": "Gmail message ID",
-					},
-					"thread_id": map[string]any{
-						"type":        "string",
-						"description": "Gmail thread ID",
-					},
-					"draft_id": map[string]any{
-						"type":        "string",
-						"description": "Gmail draft ID",
-					},
-					"connection_id": map[string]any{
-						"type":        "string",
-						"description": "Maton connection ID (also used as Maton-Connection on gateway requests)",
-					},
-					"query": map[string]any{
-						"type":                 "object",
-						"description":          "Query parameters for the selected action",
-						"additionalProperties": true,
-					},
-					"message": map[string]any{
-						"type":                 "object",
-						"description":          "Message payload for send_message. Preferred: {raw: base64url RFC822 string, no whitespace}. Convenience also supported: {to, subject, body/text/html, cc?, bcc?, content_type?}; tool builds raw.",
-						"additionalProperties": true,
-					},
-					"modify": map[string]any{
-						"type":                 "object",
-						"description":          "Modify payload (for modify_message_labels)",
-						"additionalProperties": true,
-					},
-					"draft": map[string]any{
-						"type":                 "object",
-						"description":          "Draft payload (for create_draft)",
-						"additionalProperties": true,
-					},
-					"draft_send": map[string]any{
-						"type":                 "object",
-						"description":          "Draft send payload (optional for send_draft)",
-						"additionalProperties": true,
-					},
-					"metadata": map[string]any{
-						"type":                 "object",
-						"description":          "Optional metadata for create_connection",
-						"additionalProperties": true,
-					},
+					"description": "Operation to perform",
 				},
-				"required":             []string{"action"},
-				"additionalProperties": false,
+				"message_id": map[string]any{
+					"type":        "string",
+					"description": "Gmail message ID",
+				},
+				"thread_id": map[string]any{
+					"type":        "string",
+					"description": "Gmail thread ID",
+				},
+				"draft_id": map[string]any{
+					"type":        "string",
+					"description": "Gmail draft ID",
+				},
+				"connection_id": map[string]any{
+					"type":        "string",
+					"description": "Maton connection ID (also used as Maton-Connection on gateway requests)",
+				},
+				"query": map[string]any{
+					"type":                 "object",
+					"description":          "Query parameters for the selected action",
+					"additionalProperties": true,
+				},
+				"message": map[string]any{
+					"type":                 "object",
+					"description":          "Message payload for send_message. Preferred: {raw: base64url RFC822 string, no whitespace}. Convenience also supported: {to, subject, body/text/html, cc?, bcc?, content_type?}; tool builds raw.",
+					"additionalProperties": true,
+				},
+				"modify": map[string]any{
+					"type":                 "object",
+					"description":          "Modify payload (for modify_message_labels)",
+					"additionalProperties": true,
+				},
+				"draft": map[string]any{
+					"type":                 "object",
+					"description":          "Draft payload (for create_draft)",
+					"additionalProperties": true,
+				},
+				"draft_send": map[string]any{
+					"type":                 "object",
+					"description":          "Draft send payload (optional for send_draft)",
+					"additionalProperties": true,
+				},
+				"metadata": map[string]any{
+					"type":                 "object",
+					"description":          "Optional metadata for create_connection",
+					"additionalProperties": true,
+				},
 			},
-			Strict: openai.Bool(false),
-		},
+			"required":             []string{"action"},
+			"additionalProperties": false,
+		}),
+		Kind:   ToolKindFunction,
+		Strict: false,
 	}
 }
 

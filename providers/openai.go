@@ -187,17 +187,48 @@ func (b *OpenAI) initTools(toolSet []tools.Tool) error {
 		if tool == nil {
 			continue
 		}
-		name := strings.TrimSpace(tool.Name())
-		if name == "" {
-			return fmt.Errorf("tool name cannot be empty")
+		schema := tool.Schema()
+		if err := schema.Validate(); err != nil {
+			return err
 		}
-		if _, exists := b.toolMap[name]; exists {
-			return fmt.Errorf("duplicate tool name: %s", name)
+		if _, exists := b.toolMap[schema.Name]; exists {
+			return fmt.Errorf("duplicate tool name: %s", schema.Name)
 		}
-		b.toolMap[name] = tool
-		b.toolDefs = append(b.toolDefs, tool.Definition())
+		def, err := toResponsesTool(schema)
+		if err != nil {
+			return err
+		}
+		b.toolMap[schema.Name] = tool
+		b.toolDefs = append(b.toolDefs, def)
 	}
 	return nil
+}
+
+// toResponsesTool adapts a provider-neutral tool schema into the Responses API
+// tool param. It is the OpenAI provider's sole translation point from
+// tools.ToolSchema to the SDK wire format.
+func toResponsesTool(schema tools.ToolSchema) (responses.ToolUnionParam, error) {
+	switch schema.Kind {
+	case tools.ToolKindFunction:
+		params, err := schema.ParametersMap()
+		if err != nil {
+			return responses.ToolUnionParam{}, err
+		}
+		return responses.ToolUnionParam{
+			OfFunction: &responses.FunctionToolParam{
+				Name:        schema.Name,
+				Description: openai.String(schema.Description),
+				Parameters:  params,
+				Strict:      openai.Bool(schema.Strict),
+			},
+		}, nil
+	case tools.ToolKindHostedWebSearch:
+		return responses.ToolParamOfWebSearch(responses.WebSearchToolTypeWebSearch), nil
+	case tools.ToolKindHostedCodeInterpreter:
+		return responses.ToolParamOfCodeInterpreter(responses.ToolCodeInterpreterContainerCodeInterpreterContainerAutoParam{}), nil
+	default:
+		return responses.ToolUnionParam{}, fmt.Errorf("unsupported tool kind: %q", schema.Kind)
+	}
 }
 
 func (b *OpenAI) ListModels(ctx context.Context) ([]string, error) {

@@ -16,7 +16,7 @@ func TestNewToolSetIncludesExpectedTools(t *testing.T) {
 	if len(toolSet) != 5 {
 		t.Fatalf("unexpected tool count: %d", len(toolSet))
 	}
-	got := []string{toolSet[0].Name(), toolSet[1].Name(), toolSet[2].Name(), toolSet[3].Name(), toolSet[4].Name()}
+	got := []string{toolSet[0].Schema().Name, toolSet[1].Schema().Name, toolSet[2].Schema().Name, toolSet[3].Schema().Name, toolSet[4].Schema().Name}
 	want := []string{"glob", "grep", "read", "write", "apply_patch"}
 	for i := range want {
 		if got[i] != want[i] {

@@ -10,8 +10,6 @@ import (
 	"strings"
 
 	"github.com/fernandopn/benoit/channels"
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 // ChannelBinding associates a tool-facing channel name with an implementation.
@@ -41,36 +39,35 @@ func (s *SendChannelMessageTool) Name() string {
 	return "send_channel_message"
 }
 
-func (s *SendChannelMessageTool) Definition() responses.ToolUnionParam {
+func (s *SendChannelMessageTool) Schema() ToolSchema {
 	description := "Send a text message to a configured channel user."
 	if names := s.channelNames(); len(names) > 0 {
 		description += " Configured channels: " + strings.Join(names, ", ") + "."
 	}
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        s.Name(),
-			Description: openai.String(description),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"channel": map[string]any{
-						"type":        "string",
-						"description": "Channel name (for example: telegram)",
-					},
-					"user_id": map[string]any{
-						"type":        "integer",
-						"description": "Recipient identifier inside the selected channel",
-					},
-					"message": map[string]any{
-						"type":        "string",
-						"description": "Text message to send",
-					},
+	return ToolSchema{
+		Name:        s.Name(),
+		Description: description,
+		Parameters: MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"channel": map[string]any{
+					"type":        "string",
+					"description": "Channel name (for example: telegram)",
 				},
-				"required":             []string{"channel", "user_id", "message"},
-				"additionalProperties": false,
+				"user_id": map[string]any{
+					"type":        "integer",
+					"description": "Recipient identifier inside the selected channel",
+				},
+				"message": map[string]any{
+					"type":        "string",
+					"description": "Text message to send",
+				},
 			},
-			Strict: openai.Bool(true),
-		},
+			"required":             []string{"channel", "user_id", "message"},
+			"additionalProperties": false,
+		}),
+		Kind:   ToolKindFunction,
+		Strict: true,
 	}
 }
 

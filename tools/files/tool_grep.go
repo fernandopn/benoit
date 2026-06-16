@@ -8,8 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
+	"github.com/fernandopn/benoit/tools"
 )
 
 // GrepTool searches file contents using a regex pattern.
@@ -29,32 +28,31 @@ func (g *GrepTool) Name() string {
 	return "grep"
 }
 
-func (g *GrepTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        g.Name(),
-			Description: openai.String("Search file contents by regex. Returns matching paths and line numbers inside the filesystem sandbox."),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					patternArgName: map[string]any{
-						"type":        "string",
-						"description": "Regex pattern to search",
-					},
-					pathArgName: map[string]any{
-						"type":        "string",
-						"description": "Search root path (optional). Use sandbox paths, with / as the sandbox root.",
-					},
-					includeArgName: map[string]any{
-						"type":        "string",
-						"description": "Optional glob include filter (for example: *.go)",
-					},
+func (g *GrepTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{
+		Name:        g.Name(),
+		Description: "Search file contents by regex. Returns matching paths and line numbers inside the filesystem sandbox.",
+		Parameters: tools.MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				patternArgName: map[string]any{
+					"type":        "string",
+					"description": "Regex pattern to search",
 				},
-				"required":             []string{patternArgName},
-				"additionalProperties": false,
+				pathArgName: map[string]any{
+					"type":        "string",
+					"description": "Search root path (optional). Use sandbox paths, with / as the sandbox root.",
+				},
+				includeArgName: map[string]any{
+					"type":        "string",
+					"description": "Optional glob include filter (for example: *.go)",
+				},
 			},
-			Strict: openai.Bool(false),
-		},
+			"required":             []string{patternArgName},
+			"additionalProperties": false,
+		}),
+		Kind:   tools.ToolKindFunction,
+		Strict: false,
 	}
 }
 

@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
+	"github.com/fernandopn/benoit/tools"
 )
 
 // WriteFileTool writes text content to a file path.
@@ -26,28 +25,27 @@ func (w *WriteFileTool) Name() string {
 	return "write"
 }
 
-func (w *WriteFileTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        w.Name(),
-			Description: openai.String("Write text content to a file path in the filesystem sandbox. Overwrites existing file content and creates parent directories when needed."),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					filePathArgName: map[string]any{
-						"type":        "string",
-						"description": "Sandbox file path to write. Use / as the sandbox root.",
-					},
-					contentArgName: map[string]any{
-						"type":        "string",
-						"description": "Complete file content to write",
-					},
+func (w *WriteFileTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{
+		Name:        w.Name(),
+		Description: "Write text content to a file path in the filesystem sandbox. Overwrites existing file content and creates parent directories when needed.",
+		Parameters: tools.MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				filePathArgName: map[string]any{
+					"type":        "string",
+					"description": "Sandbox file path to write. Use / as the sandbox root.",
 				},
-				"required":             []string{filePathArgName, contentArgName},
-				"additionalProperties": false,
+				contentArgName: map[string]any{
+					"type":        "string",
+					"description": "Complete file content to write",
+				},
 			},
-			Strict: openai.Bool(true),
-		},
+			"required":             []string{filePathArgName, contentArgName},
+			"additionalProperties": false,
+		}),
+		Kind:   tools.ToolKindFunction,
+		Strict: true,
 	}
 }
 

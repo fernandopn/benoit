@@ -9,8 +9,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
+	"github.com/fernandopn/benoit/tools"
 )
 
 // ListFilesTool performs glob path matching.
@@ -30,28 +29,27 @@ func (l *ListFilesTool) Name() string {
 	return "glob"
 }
 
-func (l *ListFilesTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name:        l.Name(),
-			Description: openai.String("Match file paths using a glob pattern. Supports recursive ** patterns. Paths are resolved inside the filesystem sandbox."),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					patternArgName: map[string]any{
-						"type":        "string",
-						"description": "Glob pattern such as **/*.go",
-					},
-					pathArgName: map[string]any{
-						"type":        "string",
-						"description": "Search root path (optional). Use sandbox paths, with / as the sandbox root.",
-					},
+func (l *ListFilesTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{
+		Name:        l.Name(),
+		Description: "Match file paths using a glob pattern. Supports recursive ** patterns. Paths are resolved inside the filesystem sandbox.",
+		Parameters: tools.MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				patternArgName: map[string]any{
+					"type":        "string",
+					"description": "Glob pattern such as **/*.go",
 				},
-				"required":             []string{patternArgName},
-				"additionalProperties": false,
+				pathArgName: map[string]any{
+					"type":        "string",
+					"description": "Search root path (optional). Use sandbox paths, with / as the sandbox root.",
+				},
 			},
-			Strict: openai.Bool(false),
-		},
+			"required":             []string{patternArgName},
+			"additionalProperties": false,
+		}),
+		Kind:   tools.ToolKindFunction,
+		Strict: false,
 	}
 }
 

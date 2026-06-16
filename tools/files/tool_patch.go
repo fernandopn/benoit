@@ -6,8 +6,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
+	"github.com/fernandopn/benoit/tools"
 )
 
 var updateHunkHeaderPattern = regexp.MustCompile(`^@@\s+-(\d+)(?:,\d+)?\s+\+\d+(?:,\d+)?\s+@@`)
@@ -31,26 +30,23 @@ func (p *PatchFileTool) Name() string {
 	return "apply_patch"
 }
 
-func (p *PatchFileTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{
-		OfFunction: &responses.FunctionToolParam{
-			Name: p.Name(),
-			Description: openai.String(
-				"Apply a patch with *** Begin Patch / *** End Patch envelope and Add/Update/Delete file operations. Paths are sandbox paths, with / as the sandbox root.",
-			),
-			Parameters: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					patchTextArgName: map[string]any{
-						"type":        "string",
-						"description": "Patch text containing Add/Update/Delete file operations",
-					},
+func (p *PatchFileTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{
+		Name:        p.Name(),
+		Description: "Apply a patch with *** Begin Patch / *** End Patch envelope and Add/Update/Delete file operations. Paths are sandbox paths, with / as the sandbox root.",
+		Parameters: tools.MustParameters(map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				patchTextArgName: map[string]any{
+					"type":        "string",
+					"description": "Patch text containing Add/Update/Delete file operations",
 				},
-				"required":             []string{patchTextArgName},
-				"additionalProperties": false,
 			},
-			Strict: openai.Bool(true),
-		},
+			"required":             []string{patchTextArgName},
+			"additionalProperties": false,
+		}),
+		Kind:   tools.ToolKindFunction,
+		Strict: true,
 	}
 }
 

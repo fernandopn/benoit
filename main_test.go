@@ -911,7 +911,7 @@ func TestValidateConfigSessionIDSSH(t *testing.T) {
 func toolNames(toolSet []tools.Tool) []string {
 	names := make([]string, 0, len(toolSet))
 	for _, tool := range toolSet {
-		names = append(names, tool.Name())
+		names = append(names, tool.Schema().Name)
 	}
 	return names
 }

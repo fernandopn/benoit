@@ -25,8 +25,8 @@ func (b *blockingTool) Name() string {
 	return b.name
 }
 
-func (b *blockingTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{}
+func (b *blockingTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{Name: b.name, Kind: tools.ToolKindFunction}
 }
 
 func (b *blockingTool) Call(ctx context.Context, args map[string]any) (string, error) {

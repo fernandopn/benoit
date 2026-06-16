@@ -11,7 +11,6 @@ import (
 
 	"github.com/fernandopn/benoit/tools"
 	"github.com/openai/openai-go/v3"
-	"github.com/openai/openai-go/v3/responses"
 )
 
 type scriptedChatStream struct {
@@ -90,8 +89,8 @@ func (s stubFunctionTool) Name() string {
 	return s.name
 }
 
-func (s stubFunctionTool) Definition() responses.ToolUnionParam {
-	return responses.ToolUnionParam{OfFunction: &responses.FunctionToolParam{Name: s.name}}
+func (s stubFunctionTool) Schema() tools.ToolSchema {
+	return tools.ToolSchema{Name: s.name, Kind: tools.ToolKindFunction}
 }
 
 func (s stubFunctionTool) Call(ctx context.Context, args map[string]any) (string, error) {

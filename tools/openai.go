@@ -2,8 +2,6 @@ package tools
 
 import (
 	"context"
-
-	"github.com/openai/openai-go/v3/responses"
 )
 
 // OpenAICodeInterpreterTool enables OpenAI's built-in code interpreter tool.
@@ -17,8 +15,11 @@ func (t *OpenAICodeInterpreterTool) Name() string {
 	return "code_interpreter"
 }
 
-func (t *OpenAICodeInterpreterTool) Definition() responses.ToolUnionParam {
-	return responses.ToolParamOfCodeInterpreter(responses.ToolCodeInterpreterContainerCodeInterpreterContainerAutoParam{})
+func (t *OpenAICodeInterpreterTool) Schema() ToolSchema {
+	return ToolSchema{
+		Name: t.Name(),
+		Kind: ToolKindHostedCodeInterpreter,
+	}
 }
 
 func (t *OpenAICodeInterpreterTool) Call(ctx context.Context, args map[string]any) (string, error) {
@@ -38,8 +39,11 @@ func (t *OpenAIWebSearchTool) Name() string {
 	return "web_search"
 }
 
-func (t *OpenAIWebSearchTool) Definition() responses.ToolUnionParam {
-	return responses.ToolParamOfWebSearch(responses.WebSearchToolTypeWebSearch)
+func (t *OpenAIWebSearchTool) Schema() ToolSchema {
+	return ToolSchema{
+		Name: t.Name(),
+		Kind: ToolKindHostedWebSearch,
+	}
 }
 
 func (t *OpenAIWebSearchTool) Call(ctx context.Context, args map[string]any) (string, error) {
